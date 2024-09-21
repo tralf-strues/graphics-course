@@ -6,12 +6,18 @@
 #include <etna/GraphicsPipeline.hpp>
 #include <glm/glm.hpp>
 
+#include "shaders/UniformParams.h"
 #include "scene/SceneManager.hpp"
+#include "render_utils/QuadRenderer.hpp"
 #include "wsi/Keyboard.hpp"
 
 #include "FramePacket.hpp"
 
 
+/**
+ * The meat of the sample. All things you see on the screen are contained within this class.
+ * This what you want to change and expand between different samples.
+ */
 class WorldRenderer
 {
 public:
@@ -37,8 +43,15 @@ private:
 private:
   std::unique_ptr<SceneManager> sceneMgr;
 
+  /* Shadow Pass */
+  etna::Image shadowMap;
+  glm::mat4x4 lightMatrix;
+  glm::vec3 lightPos;
+
   etna::Image mainViewDepth;
+  etna::Sampler defaultSampler;
   etna::Buffer constants;
+
 
   struct PushConstants
   {
@@ -47,9 +60,26 @@ private:
   } pushConst2M;
 
   glm::mat4x4 worldViewProj;
-  glm::mat4x4 lightMatrix;
 
-  etna::GraphicsPipeline staticMeshPipeline{};
+  struct ShadowMapCam
+  {
+    float radius = 10;
+    float lightTargetDist = 24;
+    bool usePerspectiveM = false;
+  } lightProps;
+
+  UniformParams uniformParams{
+    .lightMatrix = {},
+    .lightPos = {},
+    .time = {},
+    .baseColor = {0.9f, 0.92f, 1.0f},
+  };
+
+  etna::GraphicsPipeline basicForwardPipeline{};
+  etna::GraphicsPipeline shadowPipeline{};
+
+  std::unique_ptr<QuadRenderer> quadRenderer;
+  bool drawDebugFSQuad = false;
 
   glm::uvec2 resolution;
 };

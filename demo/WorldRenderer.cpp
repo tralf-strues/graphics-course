@@ -54,8 +54,8 @@ void WorldRenderer::loadShaders()
 {
   etna::create_program(
     "simple_material",
-    {SHADOWMAP_SHADERS_ROOT "simple_shadow.frag.spv", SHADOWMAP_SHADERS_ROOT "simple.vert.spv"});
-  etna::create_program("simple_shadow", {SHADOWMAP_SHADERS_ROOT "simple.vert.spv"});
+    {DEMO_SHADERS_ROOT "simple_shadow.frag.spv", DEMO_SHADERS_ROOT "simple.vert.spv"});
+  etna::create_program("simple_shadow", {DEMO_SHADERS_ROOT "simple.vert.spv"});
 }
 
 void WorldRenderer::setupPipelines(vk::Format swapchain_format)
