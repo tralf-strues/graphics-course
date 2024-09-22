@@ -6,7 +6,6 @@
 #include <etna/GraphicsPipeline.hpp>
 #include <glm/glm.hpp>
 
-#include "shaders/UniformParams.h"
 #include "scene/SceneManager.hpp"
 #include "render_utils/QuadRenderer.hpp"
 #include "wsi/Keyboard.hpp"
@@ -36,50 +35,48 @@ public:
     vk::CommandBuffer cmd_buf, vk::Image target_image, vk::ImageView target_image_view);
 
 private:
-  void renderScene(
-    vk::CommandBuffer cmd_buf, const glm::mat4x4& glob_tm, vk::PipelineLayout pipeline_layout);
-
+  void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
 private:
-  std::unique_ptr<SceneManager> sceneMgr;
+  enum DebugPreviewMode : uint32_t {
+    DebugPreviewDisabled,
+    DebugPreviewShadowMap,
+    DebugPreviewDepth,
+    DebugPreviewGBufferAlbedo,
+    DebugPreviewGBufferMetalnessRoughness,
+    DebugPreviewGBufferNorm,
 
-  /* Shadow Pass */
-  etna::Image shadowMap;
-  glm::mat4x4 lightMatrix;
-  glm::vec3 lightPos;
-
-  etna::Image mainViewDepth;
-  etna::Sampler defaultSampler;
-  etna::Buffer constants;
-
-
-  struct PushConstants
-  {
-    glm::mat4x4 projView;
-    glm::mat4x4 model;
-  } pushConst2M;
-
-  glm::mat4x4 worldViewProj;
-
-  struct ShadowMapCam
-  {
-    float radius = 10;
-    float lightTargetDist = 24;
-    bool usePerspectiveM = false;
-  } lightProps;
-
-  UniformParams uniformParams{
-    .lightMatrix = {},
-    .lightPos = {},
-    .time = {},
-    .baseColor = {0.9f, 0.92f, 1.0f},
+    DebugPreviewModeCount
   };
 
-  etna::GraphicsPipeline basicForwardPipeline{};
-  etna::GraphicsPipeline shadowPipeline{};
+  constexpr static vk::Format GBUFFER_ALBEDO_FORMAT = vk::Format::eR8G8B8A8Unorm;
+  constexpr static vk::Format GBUFFER_METALNESS_ROUGHNESS_FORMAT = vk::Format::eR8G8B8A8Unorm;
+  constexpr static vk::Format GBUFFER_NORM_FORMAT = vk::Format::eA2R10G10B10UnormPack32;
 
-  std::unique_ptr<QuadRenderer> quadRenderer;
-  bool drawDebugFSQuad = false;
+  // constexpr static uint32_t DEBUG_PREVIEW_MODES = 5U;
+
+  std::unique_ptr<SceneManager> sceneMgr;
+
+  etna::Sampler linearSampler;
 
   glm::uvec2 resolution;
+
+  /* Shadow Pass */
+  etna::GraphicsPipeline shadowPassPipeline;
+
+  etna::Buffer shadowCameraData;
+  etna::Image shadowMap;
+
+  /* Geometry Pass */
+  etna::GraphicsPipeline geometryPassPipeline;
+
+  etna::Buffer cameraData;
+  etna::Image depth;
+  etna::Image gBufferAlbedo;
+  etna::Image gBufferMetalnessRoughness;
+  etna::Image gBufferNorm;
+
+  /* Debug Preview Pass */
+  std::unique_ptr<QuadRenderer> debugPreviewRenderer;
+  DebugPreviewMode debugPreviewMode = DebugPreviewDisabled;
 };

@@ -11,6 +11,6 @@ target_link_libraries(demo
   PRIVATE glfw etna glm::glm wsi gui scene render_utils)
 
 target_add_shaders(demo
-  shaders/simple.vert
-  shaders/simple_shadow.frag
+  shaders/geometry_pass.vert
+  shaders/geometry_pass.frag
 )

@@ -6,9 +6,53 @@
 #include <fmt/std.h>
 #include <glm/ext/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <etna/GlobalContext.hpp>
 #include <etna/OneShotCmdMgr.hpp>
+#include <etna/Etna.hpp>
 
+namespace
+{
+
+etna::Image CreateAndUploadImage(const tinygltf::Image& src, etna::OneShotCmdMgr& cmd_mgr)
+{
+  auto uploadCmds = cmd_mgr.start();
+
+  // TODO (tralf-strues): Generate mips!
+  // auto mips = static_cast<uint32_t>(std::floor(std::log2(std::max(src.width, src.height)))) + 1;
+  uint32_t mips = 1U;
+
+  // TODO (tralf-strues): well... it is, what it is...
+  // maybe update etna's uploading mechanism in the future
+  auto img = etna::create_image_from_bytes(
+    etna::Image::CreateInfo{
+      .extent =
+        vk::Extent3D{static_cast<uint32_t>(src.width), static_cast<uint32_t>(src.height), 1},
+      .name = src.name,
+      .format = vk::Format::eR8G8B8A8Unorm,
+      .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+      .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+      .tiling = vk::ImageTiling::eOptimal,
+      .layers = 1,
+      .mipLevels = mips,
+      .samples = vk::SampleCountFlagBits::e1},
+    uploadCmds,
+    src.image.data());
+
+  // TODO (tralf-strues): Generate mips!
+  auto cmdBuffer = cmd_mgr.start();
+  etna::set_state(
+    cmdBuffer,
+    img.get(),
+    vk::PipelineStageFlagBits2::eFragmentShader,
+    vk::AccessFlagBits2::eShaderRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  return img;
+}
+
+} // end of anonymous namespace
 
 SceneManager::SceneManager()
   : oneShotCommands{etna::get_context().createOneShotCmdMgr()}
@@ -51,6 +95,34 @@ std::optional<tinygltf::Model> SceneManager::loadModel(std::filesystem::path pat
     spdlog::warn("glTF: No glTF extensions are currently implemented!");
 
   return model;
+}
+
+SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::Model& model) const
+{
+  SceneManager::ProcessedMaterials result;
+
+  result.textures.reserve(model.images.size());
+  for (const auto& srcImg : model.images)
+  {
+    result.textures.push_back(CreateAndUploadImage(srcImg, *oneShotCommands));
+  }
+
+  result.materials.reserve(model.materials.size());
+  for (const auto& srcMat : model.materials)
+  {
+    const auto& pbr = srcMat.pbrMetallicRoughness;
+
+    auto& mat = result.materials.emplace_back();
+    mat.texAlbedo = &result.textures[pbr.baseColorTexture.index];
+    mat.texMetalnessRoughness = &result.textures[pbr.metallicRoughnessTexture.index];
+    mat.texNorm = &result.textures[srcMat.normalTexture.index];
+
+    mat.colorAlbedo = glm::make_vec3(pbr.baseColorFactor.data());
+    mat.metalness = pbr.metallicFactor;
+    mat.roughness = pbr.roughnessFactor;
+  }
+
+  return result;
 }
 
 SceneManager::ProcessedInstances SceneManager::processInstances(const tinygltf::Model& model) const
@@ -238,6 +310,7 @@ SceneManager::ProcessedMeshes SceneManager::processMeshes(const tinygltf::Model&
         .vertexOffset = static_cast<std::uint32_t>(result.vertices.size()),
         .indexOffset = static_cast<std::uint32_t>(result.indices.size()),
         .indexCount = static_cast<std::uint32_t>(accessors[0]->count),
+        .material = &materials[prim.material],
       });
 
       const std::size_t vertexCount = accessors[1]->count;
@@ -382,6 +455,10 @@ void SceneManager::selectScene(std::filesystem::path path)
   // By aggregating all SceneManager fields mutations here,
   // we guarantee that we don't forget to clear something
   // when re-loading a scene.
+
+  auto [texs, mats] = processMaterials(model);
+  textures = std::move(texs);
+  materials = std::move(mats);
 
   // NOTE: you might want to store these on the GPU for GPU-driven rendering.
   auto [instMats, instMeshes] = processInstances(model);

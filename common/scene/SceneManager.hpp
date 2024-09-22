@@ -7,7 +7,19 @@
 #include <etna/Buffer.hpp>
 #include <etna/BlockingTransferHelper.hpp>
 #include <etna/VertexInput.hpp>
+#include <etna/Sampler.hpp>
 
+struct Material
+{
+  etna::Image* texAlbedo;
+  etna::Image* texMetalnessRoughness;
+  etna::Image* texNorm;
+
+  // TODO (tralf-strues): actually use the values!
+  glm::vec3 colorAlbedo;
+  float metalness;
+  float roughness;
+};
 
 // A single render element (relem) corresponds to a single draw call
 // of a certain pipeline with specific bindings (including material data)
@@ -16,8 +28,8 @@ struct RenderElement
   std::uint32_t vertexOffset;
   std::uint32_t indexOffset;
   std::uint32_t indexCount;
-  // Not implemented!
-  // Material* material;
+
+  const Material* material;
 };
 
 // A mesh is a collection of relems. A scene may have the same mesh
@@ -55,12 +67,18 @@ public:
 private:
   std::optional<tinygltf::Model> loadModel(std::filesystem::path path);
 
+  struct ProcessedMaterials
+  {
+    std::vector<etna::Image> textures;
+    std::vector<Material> materials;
+  };
+  ProcessedMaterials processMaterials(const tinygltf::Model& model) const;
+
   struct ProcessedInstances
   {
     std::vector<glm::mat4x4> matrices;
     std::vector<std::uint32_t> meshes;
   };
-
   ProcessedInstances processInstances(const tinygltf::Model& model) const;
 
   struct Vertex
@@ -87,6 +105,9 @@ private:
   tinygltf::TinyGLTF loader;
   std::unique_ptr<etna::OneShotCmdMgr> oneShotCommands;
   etna::BlockingTransferHelper transferHelper;
+
+  std::vector<etna::Image> textures;
+  std::vector<Material> materials;
 
   std::vector<RenderElement> renderElements;
   std::vector<Mesh> meshes;
