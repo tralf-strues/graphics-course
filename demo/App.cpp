@@ -40,8 +40,24 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  shadowCam.lookAt({-8, 10, 8}, {0, 0, 0}, {0, 1, 0});
   mainCam.lookAt({0, 10, 10}, {0, 0, 0}, {0, 1, 0});
+
+  dirLight.color = glm::vec3(1.0f);
+  dirLight.intensity = 0.5f;
+  dirLight.direction = normalize(glm::vec3(8, -10, 8));
+
+  pointLights.resize(8);
+  for (uint32_t i = 0; i < 8; ++i)
+  {
+    auto alpha = 2.0f * static_cast<float>(i) * glm::pi<float>() / 8.0f;
+
+    auto& light = pointLights[i];
+    light.color = glm::vec3(1.0f, 1.0f, 0.3f);
+    light.intensity = 1.0f;
+    light.radius = 10.0f;
+    light.position.x = 5.0f * std::cos(alpha);
+    light.position.y = 5.0f * std::sin(alpha);
+  }
 
   renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/DamagedHelmet/DamagedHelmet.gltf");
 }
@@ -77,17 +93,12 @@ void App::processInput(float dt)
   else
     camMoveSpeed = 1;
 
-  if (mainWindow->keyboard[KeyboardKey::kL] == ButtonState::Falling)
-    controlShadowCam = !controlShadowCam;
-
   if (mainWindow->mouse[MouseButton::mbRight] == ButtonState::Rising)
     mainWindow->captureMouse = !mainWindow->captureMouse;
 
-  auto& camToControl = controlShadowCam ? shadowCam : mainCam;
-
-  moveCam(camToControl, mainWindow->keyboard, dt);
+  moveCam(mainCam, mainWindow->keyboard, dt);
   if (mainWindow->captureMouse)
-    rotateCam(camToControl, mainWindow->mouse, dt);
+    rotateCam(mainCam, mainWindow->mouse, dt);
 
   renderer->debugInput(mainWindow->keyboard);
 }
@@ -98,8 +109,9 @@ void App::drawFrame()
 
   renderer->update(FramePacket{
     .mainCam = mainCam,
-    .shadowCam = shadowCam,
     .currentTime = static_cast<float>(windowing.getTime()),
+    .pointLights = pointLights,
+    .dirLight = dirLight,
   });
   renderer->drawFrame();
 }

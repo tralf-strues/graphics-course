@@ -29,13 +29,17 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .maxLod = 1.0f // FIXME (tralf-strues): use mip mapping
   });
 
+  pointSampler = etna::Sampler(etna::Sampler::CreateInfo{
+    .filter = vk::Filter::eNearest,
+    .addressMode = vk::SamplerAddressMode::eRepeat,
+    .name = "pointSampler"});
+
   /* Shadow Pass */
   shadowCameraData = ctx.createBuffer(etna::Buffer::CreateInfo{
     .size = sizeof(CameraData),
     .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
     .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-    .name = "shadowCameraData"
-  });
+    .name = "shadowCameraData"});
   shadowCameraData.map();
 
   shadowMap = ctx.createImage(etna::Image::CreateInfo{
@@ -51,8 +55,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .size = sizeof(CameraData),
     .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
     .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-    .name = "cameraData"
-  });
+    .name = "cameraData"});
   cameraData.map();
 
   depth = ctx.createImage(etna::Image::CreateInfo{
@@ -67,25 +70,37 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "gBufferAlbedo",
     .format = GBUFFER_ALBEDO_FORMAT,
-    .imageUsage =
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
 
   gBufferMetalnessRoughness = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "gBufferMetalnessRoughness",
     .format = GBUFFER_METALNESS_ROUGHNESS_FORMAT,
-    .imageUsage =
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
 
   gBufferNorm = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "gBufferNorm",
     .format = GBUFFER_NORM_FORMAT,
-    .imageUsage =
-      vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
+
+  /* Deferred Pass */
+  deferredTarget = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+    .name = "deferredTarget",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eStorage,
+  });
+
+  lightData = ctx.createBuffer(etna::Buffer::CreateInfo{
+    .size = sizeof(DirectionalLight) + sizeof(uint32_t) + MAX_POINT_LIGHTS * sizeof(PointLight),
+    .bufferUsage = vk::BufferUsageFlagBits::eStorageBuffer,
+    .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+    .name = "lightData"});
+  lightData.map();
 }
 
 void WorldRenderer::loadScene(std::filesystem::path path)
@@ -100,6 +115,8 @@ void WorldRenderer::loadShaders()
   etna::create_program(
     "geometry_pass",
     {DEMO_SHADERS_ROOT "geometry_pass.vert.spv", DEMO_SHADERS_ROOT "geometry_pass.frag.spv"});
+
+  etna::create_program("deferred_pass", {DEMO_SHADERS_ROOT "deferred_pass.comp.spv"});
 }
 
 void WorldRenderer::setupPipelines(vk::Format swapchain_format)
@@ -153,11 +170,10 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
           .frontFace = vk::FrontFace::eCounterClockwise,
           .lineWidth = 1.f,
         },
-      .blendingConfig = {
-        .attachments = {BLEND_STATE, BLEND_STATE, BLEND_STATE},
-        .logicOpEnable = false,
-        .logicOp = vk::LogicOp::eAnd
-      },
+      .blendingConfig =
+        {.attachments = {BLEND_STATE, BLEND_STATE, BLEND_STATE},
+         .logicOpEnable = false,
+         .logicOp = vk::LogicOp::eAnd},
       .fragmentShaderOutput =
         {
           .colorAttachmentFormats =
@@ -165,6 +181,9 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
     });
+
+  deferredPassPipeline = {};
+  deferredPassPipeline = pipelineManager.createComputePipeline("deferred_pass", {});
 }
 
 void WorldRenderer::debugInput(const Keyboard& kb)
@@ -183,14 +202,41 @@ void WorldRenderer::update(const FramePacket& packet)
 {
   ZoneScoped;
 
+  // update light data
+  {
+    auto* dst = lightData.data();
+
+    std::memcpy(dst, &packet.dirLight, sizeof(packet.dirLight));
+    dst += sizeof(packet.dirLight);
+
+    // dst += sizeof(uint32_t);  // Padding
+
+    uint32_t pointLightCount = packet.pointLights.size();
+    std::memcpy(dst, &pointLightCount, sizeof(pointLightCount));
+    dst += sizeof(pointLightCount);
+
+    std::memcpy(dst, packet.pointLights.data(), packet.pointLights.size_bytes());
+  }
+
   // calc shadow camera
   {
     const auto proj = glm::orthoLH_ZO(+10.0f, -10.0f, +10.0f, -10.0f, 0.0f, 24.0f);
+    const auto offset = 50.0f;
+
+    Camera shadowCam;
+    shadowCam.lookAt(
+      packet.mainCam.position - packet.dirLight.direction * offset,
+      packet.mainCam.position,
+      glm::vec3(0, 1, 0));
+
+    pushConstDeferredPass.projA =
+      -shadowCam.zFar * shadowCam.zNear / (shadowCam.zFar - shadowCam.zNear);
+    pushConstDeferredPass.projB = -shadowCam.zFar / (shadowCam.zFar - shadowCam.zNear);
 
     CameraData shadowCamera;
-    shadowCamera.view = packet.shadowCam.viewTm();
+    shadowCamera.view = shadowCam.viewTm();
     shadowCamera.projView = proj * shadowCamera.view;
-    shadowCamera.wPos = glm::vec4(packet.shadowCam.position, 0.0f);
+    shadowCamera.wsPos = glm::vec4(shadowCam.position, 0.0f);
 
     std::memcpy(shadowCameraData.data(), &shadowCamera, sizeof(shadowCamera));
   }
@@ -202,7 +248,7 @@ void WorldRenderer::update(const FramePacket& packet)
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.projView = packet.mainCam.projTm(aspect) * mainCamera.view;
-    mainCamera.wPos = glm::vec4(packet.mainCam.position, 0.0f);
+    mainCamera.wsPos = glm::vec4(packet.mainCam.position, 0.0f);
 
     std::memcpy(cameraData.data(), &mainCamera, sizeof(mainCamera));
   }
@@ -225,13 +271,13 @@ void WorldRenderer::renderScene(
 
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
-    struct PushConstant {
+    struct PushConstant
+    {
       glm::mat4x4 model;
       glm::mat3x4 normalMatrix;
-    } pushConst {
+    } pushConst{
       .model = instanceMatrices[instIdx],
-      .normalMatrix = glm::inverseTranspose(instanceMatrices[instIdx])
-    };
+      .normalMatrix = glm::inverseTranspose(instanceMatrices[instIdx])};
 
     cmd_buf.pushConstants<PushConstant>(
       info.getPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {pushConst});
@@ -244,7 +290,8 @@ void WorldRenderer::renderScene(
       const auto& relem = relems[relemIdx];
       const auto& mat = *relem.material;
 
-      if (material_pass) {
+      if (material_pass)
+      {
         auto materialSet = etna::create_descriptor_set(
           info.getDescriptorLayoutId(1),
           cmd_buf,
@@ -345,57 +392,212 @@ void WorldRenderer::renderWorld(
     renderScene(cmd_buf, geometryPassInfo, true);
   }
 
-  switch (debugPreviewMode) {
-    case DebugPreviewDisabled: {
-      break;
-    }
+  // Deferred Pass
+  {
+    ETNA_PROFILE_GPU(cmd_buf, deferredPass);
 
-    case DebugPreviewShadowMap: {
-      debugPreviewRenderer->render(
-        cmd_buf, target_image, target_image_view, shadowMap, linearSampler);
-      break;
-    }
+    etna::set_state(
+      cmd_buf,
+      deferredTarget.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderStorageWrite,
+      vk::ImageLayout::eGeneral,
+      vk::ImageAspectFlagBits::eColor);
 
-    case DebugPreviewDepth: {
-      debugPreviewRenderer->render(
-        cmd_buf, target_image, target_image_view, depth, linearSampler);
-      break;
-    }
+    etna::set_state(
+      cmd_buf,
+      gBufferAlbedo.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
 
-    case DebugPreviewGBufferAlbedo: {
-      debugPreviewRenderer->render(
-        cmd_buf, target_image, target_image_view, gBufferAlbedo, linearSampler);
-      break;
-    }
+    etna::set_state(
+      cmd_buf,
+      gBufferMetalnessRoughness.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
 
-    case DebugPreviewGBufferMetalnessRoughness: {
-      debugPreviewRenderer->render(
-        cmd_buf, target_image, target_image_view, gBufferMetalnessRoughness, linearSampler);
-      break;
-    }
+    etna::set_state(
+      cmd_buf,
+      gBufferNorm.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
 
-    case DebugPreviewGBufferNorm: {
-      debugPreviewRenderer->render(
-        cmd_buf, target_image, target_image_view, gBufferNorm, linearSampler);
-      break;
-    }
+    etna::set_state(
+      cmd_buf,
+      depth.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eDepth);
 
-    default: {
-      break;
-    }
+    etna::flush_barriers(cmd_buf);
+
+    auto deferredPassInfo = etna::get_shader_program("deferred_pass");
+
+    auto cameraSet = etna::create_descriptor_set(
+      deferredPassInfo.getDescriptorLayoutId(0),
+      cmd_buf,
+      {
+        etna::Binding{0, cameraData.genBinding()},
+      });
+
+    auto resourceSet = etna::create_descriptor_set(
+      deferredPassInfo.getDescriptorLayoutId(1),
+      cmd_buf,
+      {
+        etna::Binding(0, deferredTarget.genBinding(nullptr, vk::ImageLayout::eGeneral)),
+        etna::Binding(
+          1, gBufferAlbedo.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(
+          2,
+          gBufferMetalnessRoughness.genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(
+          3, gBufferNorm.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(
+          4, depth.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(5, lightData.genBinding()),
+      });
+
+    cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, deferredPassPipeline.getVkPipeline());
+    cmd_buf.bindDescriptorSets(
+      vk::PipelineBindPoint::eCompute,
+      deferredPassPipeline.getVkPipelineLayout(),
+      0,
+      {cameraSet.getVkSet(), resourceSet.getVkSet()},
+      {});
+
+    pushConstDeferredPass.resolution = resolution;
+    pushConstDeferredPass.invResolution = 1.0f / glm::vec2(resolution);
+
+    cmd_buf.pushConstants<PushConstantDeferredPass>(
+      deferredPassInfo.getPipelineLayout(),
+      vk::ShaderStageFlagBits::eCompute,
+      0,
+      {pushConstDeferredPass});
+
+    cmd_buf.dispatch((resolution.x + 15) / 16, (resolution.y + 15) / 16, 1);
   }
 
-  // if (drawDebugFSQuad)
-  //   quadRenderer->render(cmd_buf, target_image, target_image_view, shadowMap, defaultSampler);
+  // Blit from target to swapchain image
+  {
+    etna::set_state(
+      cmd_buf,
+      deferredTarget.get(),
+      vk::PipelineStageFlagBits2::eTransfer,
+      vk::AccessFlagBits2::eTransferRead,
+      vk::ImageLayout::eTransferSrcOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmd_buf,
+      target_image,
+      vk::PipelineStageFlagBits2::eTransfer,
+      vk::AccessFlagBits2::eTransferWrite,
+      vk::ImageLayout::eTransferDstOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::flush_barriers(cmd_buf);
+
+    vk::ImageBlit blitInfo{
+      .srcSubresource =
+        {
+          .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .mipLevel = 0,
+          .baseArrayLayer = 0,
+          .layerCount = 1,
+        },
+      .srcOffsets =
+        {
+          {{{0, 0, 0},
+            {static_cast<int32_t>(resolution.x), static_cast<int32_t>(resolution.y), 1}}}},
+      .dstSubresource =
+        {
+          .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .mipLevel = 0,
+          .baseArrayLayer = 0,
+          .layerCount = 1,
+        },
+      .dstOffsets =
+        {
+          {{{0, 0, 0},
+            {static_cast<int32_t>(resolution.x), static_cast<int32_t>(resolution.y), 1}}}},
+    };
+
+    cmd_buf.blitImage(
+      deferredTarget.get(),
+      vk::ImageLayout::eTransferSrcOptimal,
+      target_image,
+      vk::ImageLayout::eTransferDstOptimal,
+      blitInfo,
+      vk::Filter::eNearest);
+
+    etna::set_state(
+      cmd_buf,
+      target_image,
+      vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+      vk::AccessFlagBits2::eColorAttachmentWrite,
+      vk::ImageLayout::eColorAttachmentOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::flush_barriers(cmd_buf);
+  }
+
+  switch (debugPreviewMode)
+  {
+  case DebugPreviewDisabled: {
+    break;
+  }
+
+  case DebugPreviewShadowMap: {
+    debugPreviewRenderer->render(
+      cmd_buf, target_image, target_image_view, shadowMap, linearSampler);
+    break;
+  }
+
+  case DebugPreviewDepth: {
+    debugPreviewRenderer->render(cmd_buf, target_image, target_image_view, depth, linearSampler);
+    break;
+  }
+
+  case DebugPreviewGBufferAlbedo: {
+    debugPreviewRenderer->render(
+      cmd_buf, target_image, target_image_view, gBufferAlbedo, linearSampler);
+    break;
+  }
+
+  case DebugPreviewGBufferMetalnessRoughness: {
+    debugPreviewRenderer->render(
+      cmd_buf, target_image, target_image_view, gBufferMetalnessRoughness, linearSampler);
+    break;
+  }
+
+  case DebugPreviewGBufferNorm: {
+    debugPreviewRenderer->render(
+      cmd_buf, target_image, target_image_view, gBufferNorm, linearSampler);
+    break;
+  }
+
+  default: {
+    break;
+  }
+  }
 }
 
 void WorldRenderer::drawGui()
 {
   ImGui::Begin("Demo settings");
 
-  // float color[3]{uniformParams.baseColor.r, uniformParams.baseColor.g, uniformParams.baseColor.b};
-  // ImGui::ColorEdit3(
-  //   "Meshes base color", color, ImGuiColorEditFlags_PickerHueWheel | ImGuiColorEditFlags_NoInputs);
+  // float color[3]{uniformParams.baseColor.r, uniformParams.baseColor.g,
+  // uniformParams.baseColor.b}; ImGui::ColorEdit3(
+  //   "Meshes base color", color, ImGuiColorEditFlags_PickerHueWheel |
+  //   ImGuiColorEditFlags_NoInputs);
   // uniformParams.baseColor = {color[0], color[1], color[2]};
 
   // float pos[3]{uniformParams.lightPos.x, uniformParams.lightPos.y, uniformParams.lightPos.z};

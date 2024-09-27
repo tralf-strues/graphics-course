@@ -8,16 +8,15 @@
 layout(set = 1, binding = 0) uniform sampler2D texAlbedo;
 layout(set = 1, binding = 1) uniform sampler2D texMetalnessRoughness;
 layout(set = 1, binding = 2) uniform sampler2D texNorm;
-//--------------------------------------------------------------------------------------------------
+//==================================================================================================
 
 //==================================================================================================
 // Stage linkage
 //--------------------------------------------------------------------------------------------------
 layout(location = 0) in vs_out_t
 {
-  vec3 wPos;
-  vec3 wNorm;
-  vec3 wTangent;
+  vec3 wsPos;
+  vec3 wsNorm;
   vec2 texCoord;
 } vertex;
 
@@ -36,8 +35,32 @@ layout(location = 1) out vec4 out_metalnessRoughness;
 // R10G10B10A2
 // - R10G10B10: world-space normal
 // - A2:        reserved for future use
-layout(location = 2) out vec4 out_wNorm;
+layout(location = 2) out vec4 out_wsNorm;
 //==================================================================================================
+
+mat3 ConstructCotangentFrame(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
+{
+  vec3 dp1      = dFdx(wsPos);
+  vec3 dp2      = dFdy(wsPos);
+  vec2 duv1     = dFdx(texCoord);
+  vec2 duv2     = dFdy(texCoord);
+
+  vec3 dp1perp  = cross(wsNorm, dp1);
+  vec3 dp2perp  = cross(dp2, wsNorm);
+
+  vec3 wsTang   = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 wsBitang = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax  = inversesqrt(max(dot(wsTang, wsTang), dot(wsBitang, wsBitang)));
+
+  return mat3(wsTang * invmax, wsBitang * invmax, wsNorm);
+}
+
+vec3 PerturbNormal(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
+{
+  vec3 map = 2.0f * texture(texNorm, vertex.texCoord).xyz - 1.0f;
+  mat3 tbn = ConstructCotangentFrame(wsNorm, wsPos, texCoord);
+  return normalize(tbn * map);
+}
 
 void main()
 {
@@ -48,13 +71,5 @@ void main()
   out_metalnessRoughness = vec4(texture(texMetalnessRoughness, vertex.texCoord).rg, 0.0f, 0.0f);
 
   /* Normal */
-  const vec3 t   = normalize(vertex.wTangent);
-  const vec3 n   = normalize(vertex.wNorm);
-  const vec3 b   = normalize(cross(n, t));
-  const mat3 tbn = mat3(t, b, n);
-
-  vec3 normal    = 2.0f * texture(texNorm, vertex.texCoord).xyz - 1.0f;
-  normal         = normalize(tbn * normal);
-
-  out_wNorm      = vec4(0.5f * normal + 0.5f, 0.0f);
+  out_wsNorm = vec4(PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord), 0.0f);
 }

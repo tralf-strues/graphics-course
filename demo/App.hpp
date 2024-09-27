@@ -2,6 +2,7 @@
 
 #include "wsi/OsWindowingManager.hpp"
 #include "scene/Camera.hpp"
+#include "shaders/Light.h"
 
 #include "Renderer.hpp"
 
@@ -32,9 +33,9 @@ private:
   float camRotateSpeed = 0.1f;
   float zoomSensitivity = 2.0f;
   Camera mainCam;
-  Camera shadowCam;
 
-  bool controlShadowCam = false;
+  DirectionalLight dirLight;
+  std::vector<PointLight> pointLights;
 
   std::unique_ptr<Renderer> renderer;
 };

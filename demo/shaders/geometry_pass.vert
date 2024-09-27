@@ -24,30 +24,27 @@ layout(push_constant) uniform params_t
 //==================================================================================================
 // Stage linkage
 //--------------------------------------------------------------------------------------------------
-layout(location = 0) in vec4 vPosNorm;
-layout(location = 1) in vec4 vTexCoordAndTang;
+layout(location = 0) in vec4 posNorm;
+layout(location = 1) in vec4 texCoordAndTang;
 
 layout(location = 0) out vs_out_t
 {
-  vec3 wPos;
-  vec3 wNorm;
-  vec3 wTangent;
+  vec3 wsPos;
+  vec3 wsNorm;
   vec2 texCoord;
 } out_vertex;
 
 out gl_PerVertex { vec4 gl_Position; };
-
 //==================================================================================================
 
 void main(void)
 {
-  const vec4 wNorm = vec4(decode_normal(floatBitsToInt(vPosNorm.w)),         0.0f);
-  const vec4 wTang = vec4(decode_normal(floatBitsToInt(vTexCoordAndTang.z)), 0.0f);
+  const vec4 wNorm     = vec4(decode_normal(floatBitsToInt(posNorm.w)),         0.0f);
+  const vec4 wTang     = vec4(decode_normal(floatBitsToInt(texCoordAndTang.z)), 0.0f);
 
-  out_vertex.wPos     = (params.model * vec4(vPosNorm.xyz, 1.0f)).xyz;
-  out_vertex.wNorm    = normalize(params.normalMatrix * wNorm.xyz);
-  out_vertex.wTangent = normalize(params.normalMatrix * wTang.xyz);
-  out_vertex.texCoord = vTexCoordAndTang.xy;
+  out_vertex.wsPos     = (params.model * vec4(posNorm.xyz, 1.0f)).xyz;
+  out_vertex.wsNorm    = normalize(params.normalMatrix * wNorm.xyz);
+  out_vertex.texCoord  = texCoordAndTang.xy;
 
-  gl_Position = camera.projView * vec4(out_vertex.wPos, 1.0f);
+  gl_Position          = camera.projView * vec4(out_vertex.wsPos, 1.0f);
 }

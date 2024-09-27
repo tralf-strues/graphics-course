@@ -13,4 +13,5 @@ target_link_libraries(demo
 target_add_shaders(demo
   shaders/geometry_pass.vert
   shaders/geometry_pass.frag
+  shaders/deferred_pass.comp
 )

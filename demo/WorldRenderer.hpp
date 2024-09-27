@@ -3,6 +3,7 @@
 #include <etna/Image.hpp>
 #include <etna/Sampler.hpp>
 #include <etna/Buffer.hpp>
+#include <etna/ComputePipeline.hpp>
 #include <etna/GraphicsPipeline.hpp>
 #include <glm/glm.hpp>
 
@@ -53,11 +54,15 @@ private:
   constexpr static vk::Format GBUFFER_METALNESS_ROUGHNESS_FORMAT = vk::Format::eR8G8B8A8Unorm;
   constexpr static vk::Format GBUFFER_NORM_FORMAT = vk::Format::eA2R10G10B10UnormPack32;
 
-  // constexpr static uint32_t DEBUG_PREVIEW_MODES = 5U;
+  // FIXME (tralf-strues): upload light data each frame using a dedicated transfer
+  // instead of just mapping the buffer... could get quite large in the future, and not
+  // all of us have amd gpus :)
+  constexpr static uint32_t MAX_POINT_LIGHTS = 32U;
 
   std::unique_ptr<SceneManager> sceneMgr;
 
   etna::Sampler linearSampler;
+  etna::Sampler pointSampler;
 
   glm::uvec2 resolution;
 
@@ -75,6 +80,19 @@ private:
   etna::Image gBufferAlbedo;
   etna::Image gBufferMetalnessRoughness;
   etna::Image gBufferNorm;
+
+  /* Deferred Pass */
+  etna::ComputePipeline deferredPassPipeline;
+
+  etna::Buffer lightData;
+  etna::Image deferredTarget;
+
+  struct PushConstantDeferredPass {
+    glm::uvec2 resolution;
+    glm::vec2 invResolution;
+    float projA;
+    float projB;
+  } pushConstDeferredPass;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;

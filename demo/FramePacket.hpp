@@ -1,7 +1,9 @@
 #pragma once
 
-#include <scene/Camera.hpp>
+#include <span>
 
+#include <scene/Camera.hpp>
+#include "shaders/Light.h"
 
 /**
  * Contains data sent from the gameplay/logic part of the application
@@ -10,6 +12,8 @@
 struct FramePacket
 {
   Camera mainCam;
-  Camera shadowCam;
   float currentTime = 0;
+
+  std::span<const PointLight> pointLights;
+  DirectionalLight dirLight;
 };

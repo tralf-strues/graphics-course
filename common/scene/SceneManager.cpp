@@ -423,7 +423,7 @@ SceneManager::ProcessedMeshes SceneManager::processMeshes(const tinygltf::Model&
   return result;
 }
 
-void SceneManager::uploadData(
+void SceneManager::uploadMeshes(
   std::span<const Vertex> vertices, std::span<const std::uint32_t> indices)
 {
   unifiedVbuf = etna::get_context().createBuffer(etna::Buffer::CreateInfo{
@@ -470,7 +470,7 @@ void SceneManager::selectScene(std::filesystem::path path)
   renderElements = std::move(relems);
   meshes = std::move(meshs);
 
-  uploadData(verts, inds);
+  uploadMeshes(verts, inds);
 }
 
 etna::VertexByteStreamFormatDescription SceneManager::getVertexFormatDescription()
