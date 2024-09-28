@@ -118,8 +118,14 @@ layout(set = 1, binding = 1) uniform sampler2D gbufferAlbedo;
 layout(set = 1, binding = 2) uniform sampler2D gbufferMetalnessRoughness;
 layout(set = 1, binding = 3) uniform sampler2D gbufferWsNorm;
 layout(set = 1, binding = 4) uniform sampler2D depthBuffer;
+layout(set = 1, binding = 5) uniform sampler2D shadowMap;
 
-layout(set = 1, binding = 5, std430) readonly buffer light_data_t
+layout(set = 1, binding = 6) uniform shadow_camera_data_t
+{
+  CameraData shadowCamera;
+};
+
+layout(set = 1, binding = 7, std430) readonly buffer light_data_t
 {
   DirectionalLight dirLight;
 
@@ -144,19 +150,22 @@ void main()
 {
   /* Getting the target image coords, TODO (tralf-strues): swizzling */
   uvec2 coord = gl_GlobalInvocationID.xy;
-  vec2  uv    = (vec2(coord) + 0.5f) * params.invResolution;
-
   if (coord.x >= params.resolution.x || coord.y >= params.resolution.y) {
     return;
   }
 
+  vec2 uv = (vec2(coord) + 0.5f) * params.invResolution;
+
   /* Unpacking the surface point properties */
   SurfacePoint point;
 
-  vec2 mr           = texture(gbufferMetalnessRoughness, uv).xy;
-  point.albedo      = texture(gbufferAlbedo, uv).xyz;
-  point.metalness   = mr.x;
-  point.roughness   = mr.y;
+  vec4 sampledAlbedo             = texture(gbufferAlbedo, uv);
+  vec4 sampledMetalnessRoughness = texture(gbufferMetalnessRoughness, uv);
+
+  vec2 mr           = sampledMetalnessRoughness.rg;
+  point.albedo      = sampledAlbedo.rgb;
+  point.metalness   = mr.r;
+  point.roughness   = mr.g;
   point.f0          = vec3(0.04f);
   point.f0          = mix(point.f0, point.albedo, point.metalness);
 
@@ -172,7 +181,11 @@ void main()
   point.normal      = normalize(texture(gbufferWsNorm, uv).xyz);
   point.toCam       = normalize(camera.wsPos - point.position);
 
+  // Indirect lighting for now
   vec3 L0 = (point.f0 / PI) * vec3(0.2f);
+
+  // Emission
+  L0 += vec3(sampledAlbedo.a, sampledMetalnessRoughness.ba);
 
   /* Lighting: directional light */
   LightSample dirLightSample;

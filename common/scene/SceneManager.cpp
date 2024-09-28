@@ -116,6 +116,7 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     mat.texAlbedo = &result.textures[pbr.baseColorTexture.index];
     mat.texMetalnessRoughness = &result.textures[pbr.metallicRoughnessTexture.index];
     mat.texNorm = &result.textures[srcMat.normalTexture.index];
+    mat.texEmissive = &result.textures[srcMat.emissiveTexture.index];
 
     mat.colorAlbedo = glm::make_vec3(pbr.baseColorFactor.data());
     mat.metalness = static_cast<float>(pbr.metallicFactor);

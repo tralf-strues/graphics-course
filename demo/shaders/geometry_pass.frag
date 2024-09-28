@@ -8,6 +8,7 @@
 layout(set = 1, binding = 0) uniform sampler2D texAlbedo;
 layout(set = 1, binding = 1) uniform sampler2D texMetalnessRoughness;
 layout(set = 1, binding = 2) uniform sampler2D texNorm;
+layout(set = 1, binding = 3) uniform sampler2D texEmissive;
 //==================================================================================================
 
 //==================================================================================================
@@ -22,15 +23,15 @@ layout(location = 0) in vs_out_t
 
 // R8G8B8A8_UNORM
 // - R8G8B8: albedo
-// - A8:     reserved for future use
-layout(location = 0) out vec4 out_albedo;
+// - A8:     emissive r channel
+layout(location = 0) out vec4 out_albedoEmissiveR;
 
 // R8G8B8A8_UNORM
 // - R8: metalness
 // - G8: roughness
-// - B8: reserved for future use
-// - A8: reserved for future use
-layout(location = 1) out vec4 out_metalnessRoughness;
+// - B8: emissive g channel
+// - A8: emissive b channel
+layout(location = 1) out vec4 out_metalnessRoughnessEmissiveGB;
 
 // R10G10B10A2
 // - R10G10B10: world-space normal
@@ -64,13 +65,27 @@ vec3 PerturbNormal(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
   return normalize(tbn * map);
 }
 
+// Borrowed from: https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
+vec3 SRGBtoLinear(vec3 sRGB)
+{
+  bvec3 cutoff = lessThan(sRGB, vec3(0.04045f));
+  vec3 higher = pow((sRGB + vec3(0.055f)) / vec3(1.055f), vec3(2.4f));
+  vec3 lower = sRGB / vec3(12.92f);
+
+  return mix(higher, lower, cutoff);
+}
+
 void main()
 {
+  // FIXME (tralf-strues): Use separate texture formats for different textures, this way
+  // there won't be a need to manually convert between srgb and linear
+  vec3 emissive = SRGBtoLinear(texture(texEmissive, vertex.texCoord).rgb);
+
   /* Albedo */
-  out_albedo = vec4(texture(texAlbedo, vertex.texCoord).rgb, 1.0f);
+  out_albedoEmissiveR = vec4(SRGBtoLinear(texture(texAlbedo, vertex.texCoord).rgb), emissive.r);
 
   /* Metalness & Roughness */
-  out_metalnessRoughness = vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, 0.0f, 0.0f);
+  out_metalnessRoughnessEmissiveGB = vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, emissive.gb);
 
   /* Normal */
   out_wsNorm = vec4(PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord), 0.0f);

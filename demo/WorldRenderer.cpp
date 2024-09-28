@@ -224,13 +224,9 @@ void WorldRenderer::update(const FramePacket& packet)
   // calc shadow camera
   {
     const auto proj = glm::orthoLH_ZO(+10.0f, -10.0f, +10.0f, -10.0f, 0.0f, 24.0f);
-    const auto offset = 50.0f;
 
     Camera shadowCam;
-    shadowCam.lookAt(
-      packet.mainCam.position - packet.dirLight.direction * offset,
-      packet.mainCam.position,
-      glm::vec3(0, 1, 0));
+    shadowCam.lookAt({-8, 10, 8}, {0, 0, 0}, {0, 1, 0});
 
     pushConstDeferredPass.projA =
       -shadowCam.zFar * shadowCam.zNear / (shadowCam.zFar - shadowCam.zNear);
@@ -315,6 +311,10 @@ void WorldRenderer::renderScene(
               2,
               mat.texNorm->genBinding(
                 linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+            etna::Binding{
+              3,
+              mat.texEmissive->genBinding(
+                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
           });
 
         cmd_buf.bindDescriptorSets(
@@ -382,9 +382,23 @@ void WorldRenderer::renderWorld(
       cmd_buf,
       {{0, 0}, {resolution.x, resolution.y}},
 
-      {{.image = gBufferAlbedo.get(), .view = gBufferAlbedo.getView({})},
-       {.image = gBufferMetalnessRoughness.get(), .view = gBufferMetalnessRoughness.getView({})},
-       {.image = gBufferNorm.get(), .view = gBufferNorm.getView({})}},
+      {
+        {
+          .image = gBufferAlbedo.get(),
+          .view = gBufferAlbedo.getView({}),
+          .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
+        },
+        {
+          .image = gBufferMetalnessRoughness.get(),
+          .view = gBufferMetalnessRoughness.getView({}),
+          .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
+        },
+        {
+          .image = gBufferNorm.get(),
+          .view = gBufferNorm.getView({}),
+          .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
+        },
+      },
 
       {.image = depth.get(), .view = depth.getView({})});
 
@@ -443,6 +457,14 @@ void WorldRenderer::renderWorld(
       vk::ImageLayout::eShaderReadOnlyOptimal,
       vk::ImageAspectFlagBits::eDepth);
 
+    etna::set_state(
+      cmd_buf,
+      shadowMap.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eDepth);
+
     etna::flush_barriers(cmd_buf);
 
     auto deferredPassInfo = etna::get_shader_program("deferred_pass");
@@ -469,7 +491,10 @@ void WorldRenderer::renderWorld(
           3, gBufferNorm.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
           4, depth.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
-        etna::Binding(5, lightData.genBinding()),
+        etna::Binding(
+          5, shadowMap.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(6, shadowCameraData.genBinding()),
+        etna::Binding(7, lightData.genBinding()),
       });
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, deferredPassPipeline.getVkPipeline());

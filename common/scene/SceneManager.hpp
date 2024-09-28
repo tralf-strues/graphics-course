@@ -14,6 +14,7 @@ struct Material
   etna::Image* texAlbedo;
   etna::Image* texMetalnessRoughness;
   etna::Image* texNorm;
+  etna::Image* texEmissive;
 
   // TODO (tralf-strues): actually use the values!
   glm::vec3 colorAlbedo;
