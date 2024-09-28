@@ -55,9 +55,11 @@ mat3 ConstructCotangentFrame(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
   return mat3(wsTang * invmax, wsBitang * invmax, wsNorm);
 }
 
+// Normal perturbation without precomputed tangents.
+// Borrowed from: http://www.thetenthplanet.de/archives/1180
 vec3 PerturbNormal(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
 {
-  vec3 map = 2.0f * texture(texNorm, vertex.texCoord).xyz - 1.0f;
+  vec3 map = 255.0f / 127.0f * texture(texNorm, vertex.texCoord).xyz - 128.0f / 127.0f;
   mat3 tbn = ConstructCotangentFrame(wsNorm, wsPos, texCoord);
   return normalize(tbn * map);
 }
@@ -68,7 +70,7 @@ void main()
   out_albedo = vec4(texture(texAlbedo, vertex.texCoord).rgb, 1.0f);
 
   /* Metalness & Roughness */
-  out_metalnessRoughness = vec4(texture(texMetalnessRoughness, vertex.texCoord).rg, 0.0f, 0.0f);
+  out_metalnessRoughness = vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, 0.0f, 0.0f);
 
   /* Normal */
   out_wsNorm = vec4(PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord), 0.0f);

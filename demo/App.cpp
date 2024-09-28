@@ -40,26 +40,16 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  mainCam.lookAt({0, 10, 10}, {0, 0, 0}, {0, 1, 0});
+  mainCam.lookAt({0, 2, 2}, {0, 0, 0}, {0, 1, 0});
 
   dirLight.color = glm::vec3(1.0f);
-  dirLight.intensity = 0.5f;
+  dirLight.intensity = 0.8f;
   dirLight.direction = normalize(glm::vec3(8, -10, 8));
 
-  pointLights.resize(8);
-  for (uint32_t i = 0; i < 8; ++i)
-  {
-    auto alpha = 2.0f * static_cast<float>(i) * glm::pi<float>() / 8.0f;
-
-    auto& light = pointLights[i];
-    light.color = glm::vec3(1.0f, 1.0f, 0.3f);
-    light.intensity = 1.0f;
-    light.radius = 10.0f;
-    light.position.x = 5.0f * std::cos(alpha);
-    light.position.y = 5.0f * std::sin(alpha);
-  }
+  pointLights.resize(2);
 
   renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/DamagedHelmet/DamagedHelmet.gltf");
+  // renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/FlightHelmet/FlightHelmet.gltf");
 }
 
 void App::run()
@@ -74,6 +64,23 @@ void App::run()
     windowing.poll();
 
     processInput(diffTime);
+
+    const auto pointLightCount = static_cast<uint32_t>(pointLights.size());
+    const auto invPointLightCount = 1.0f / static_cast<float>(pointLightCount);
+
+    for (uint32_t i = 0; i < pointLightCount; ++i)
+    {
+      float alpha = 0.5f * static_cast<float>(currTime) +
+        2.0f * static_cast<float>(i) * glm::pi<float>() * invPointLightCount;
+
+      auto& light = pointLights[i];
+      light.color = glm::vec3(1.0f, 0.6f, 0.3f);
+      light.intensity = 0.75f;
+      light.radius = 6.0f;
+      light.position.x = 1.5f * std::cos(alpha);
+      light.position.y = 1.5f * std::sin(alpha);
+      light.position.z = 0.0f;
+    }
 
     drawFrame();
 

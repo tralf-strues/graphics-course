@@ -9,6 +9,7 @@ struct DirectionalLight
   float intensity;
 
   shader_vec3 direction;
+  float _pad0;
 };
 
 struct PointLight

@@ -9,9 +9,16 @@ struct CameraData
   shader_mat4 view;
 
   shader_vec3 wsPos;
+  float _pad0;
+
   shader_vec3 wsRight;
+  float _pad1;
+
   shader_vec3 wsUp;
+  float _pad2;
+
   shader_vec3 wsForward;
+  float _pad3;
 };
 
 #endif // CAMERA_DATA_H_INCLUDED

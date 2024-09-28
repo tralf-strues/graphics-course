@@ -26,13 +26,16 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .addressMode = vk::SamplerAddressMode::eRepeat,
     .name = "linearSampler",
     .minLod = 0.0f,
-    .maxLod = 1.0f // FIXME (tralf-strues): use mip mapping
+    .maxLod = 0.0f, // FIXME (tralf-strues): use mip mapping
   });
 
   pointSampler = etna::Sampler(etna::Sampler::CreateInfo{
     .filter = vk::Filter::eNearest,
     .addressMode = vk::SamplerAddressMode::eRepeat,
-    .name = "pointSampler"});
+    .name = "pointSampler",
+    .minLod = 0.0f,
+    .maxLod = 0.0f,
+  });
 
   /* Shadow Pass */
   shadowCameraData = ctx.createBuffer(etna::Buffer::CreateInfo{
@@ -209,11 +212,11 @@ void WorldRenderer::update(const FramePacket& packet)
     std::memcpy(dst, &packet.dirLight, sizeof(packet.dirLight));
     dst += sizeof(packet.dirLight);
 
-    // dst += sizeof(uint32_t);  // Padding
-
-    uint32_t pointLightCount = packet.pointLights.size();
+    const auto pointLightCount = static_cast<uint32_t>(packet.pointLights.size());
     std::memcpy(dst, &pointLightCount, sizeof(pointLightCount));
     dst += sizeof(pointLightCount);
+
+    dst += 3U * sizeof(uint32_t);  // Padding to the vec4 alignment before the array of structs
 
     std::memcpy(dst, packet.pointLights.data(), packet.pointLights.size_bytes());
   }
@@ -249,6 +252,10 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.projView = packet.mainCam.projTm(aspect) * mainCamera.view;
     mainCamera.wsPos = glm::vec4(packet.mainCam.position, 0.0f);
+
+    mainCamera.wsForward = packet.mainCam.forward();
+    mainCamera.wsRight = packet.mainCam.right();
+    mainCamera.wsUp = packet.mainCam.up();
 
     std::memcpy(cameraData.data(), &mainCamera, sizeof(mainCamera));
   }

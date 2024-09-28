@@ -124,6 +124,8 @@ layout(set = 1, binding = 5, std430) readonly buffer light_data_t
   DirectionalLight dirLight;
 
   uint pointLightCount;
+  uint _pad0[3];
+
   PointLight pointLights[];
 };
 
@@ -142,7 +144,7 @@ void main()
 {
   /* Getting the target image coords, TODO (tralf-strues): swizzling */
   uvec2 coord = gl_GlobalInvocationID.xy;
-  vec2  uv    = vec2(coord) * params.invResolution;
+  vec2  uv    = (vec2(coord) + 0.5f) * params.invResolution;
 
   if (coord.x >= params.resolution.x || coord.y >= params.resolution.y) {
     return;
@@ -167,8 +169,10 @@ void main()
   wsFragRay         = normalize(wsFragRay);
   point.position    = camera.wsPos + linearDepth * wsFragRay;
 
-  point.normal      = texture(gbufferWsNorm, uv).xyz;
-  point.toCam       = camera.wsPos - point.position;
+  point.normal      = normalize(texture(gbufferWsNorm, uv).xyz);
+  point.toCam       = normalize(camera.wsPos - point.position);
+
+  vec3 L0 = (point.f0 / PI) * vec3(0.2f);
 
   /* Lighting: directional light */
   LightSample dirLightSample;
@@ -176,28 +180,28 @@ void main()
   dirLightSample.halfVector = normalize(point.toCam + dirLightSample.toLight);
   dirLightSample.radiance   = dirLight.color * dirLight.intensity;
 
-  vec3 L0 = CalculateRadiance(point, dirLightSample);
-
-  uint C = min(pointLightCount, 16);
+  L0 += CalculateRadiance(point, dirLightSample);
 
   /* Lighting: point lights */
-  for (uint i = 0; i < C; ++i)
+  for (uint i = 0; i < pointLightCount; ++i)
   {
     PointLight pointLight = pointLights[i];
 
     LightSample pointLightSample;
     pointLightSample.toLight    = normalize(pointLight.position - point.position);
     pointLightSample.halfVector = normalize(point.toCam + pointLightSample.toLight);
-    // pointLightSample.radiance   = pointLight.color * pointLight.intensity;
-    pointLightSample.radiance = vec3(0.5f);
+    pointLightSample.radiance   = pointLight.color * pointLight.intensity;
 
     // Attenuation with the fallof exactly at the light's radius.
     // Borrowed from: https://lisyarus.github.io/blog/posts/point-light-attenuation.html
-    float dist                  = length(pointLight.position - point.position);
-    float attenuation           = max(1.0f - (dist / pointLight.radius), 0.0f) / (dist * dist);
+    float dist                  = length(pointLight.position - point.position) / pointLight.radius;
+    float dist2                 = dist * dist;
+    float numerator             = max(1.0f - dist2, 0.0f);
+    numerator                  *= numerator;
+    float attenuation           = numerator / (1.0f + 4.0f * dist2);
     pointLightSample.radiance  *= attenuation;
 
-    //L0 += CalculateRadiance(point, pointLightSample);
+    L0 += CalculateRadiance(point, pointLightSample);
   }
 
   imageStore(out_color, ivec2(coord), vec4(L0, 1.0f));
