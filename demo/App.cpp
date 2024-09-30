@@ -43,10 +43,10 @@ App::App()
   mainCam.lookAt({0, 2, 2}, {0, 0, 0}, {0, 1, 0});
 
   dirLight.color = glm::vec3(1.0f);
-  dirLight.intensity = 2.5f;
+  dirLight.intensity = 8.5f;
   dirLight.direction = normalize(glm::vec3(-1, -10, -8));
 
-  pointLights.resize(4);
+  pointLights.resize(5);
 
   renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/DamagedHelmet/DamagedHelmet.gltf");
 }
@@ -74,11 +74,11 @@ void App::run()
 
       auto& light = pointLights[i];
       light.color = glm::vec3(1.0f, 0.6f, 0.3f);
-      light.intensity = 0.75f;
-      light.radius = 6.0f;
-      light.position.x = 1.25f * std::cos(alpha);
+      light.intensity = 0.9f;
+      light.radius = 7.0f;
+      light.position.x = 3.0f * std::cos(alpha);
       light.position.y = 0.0f;
-      light.position.z = 1.25f * std::sin(alpha);
+      light.position.z = 3.0f * std::sin(alpha);
     }
 
     drawFrame();

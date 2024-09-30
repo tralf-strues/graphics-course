@@ -88,5 +88,6 @@ void main()
   out_metalnessRoughnessEmissiveGB = vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, emissive.gb);
 
   /* Normal */
-  out_wsNorm = vec4(PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord), 0.0f);
+  vec3 perturbedNormal = PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord);
+  out_wsNorm = vec4(2.0f * perturbedNormal + 1.0f, 0.0f);
 }

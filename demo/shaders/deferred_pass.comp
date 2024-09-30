@@ -139,6 +139,7 @@ layout(push_constant) uniform params_t
 {
   uvec2 resolution;
   vec2 invResolution;
+  float aspect;
 
   float projA;  // Precomputed coefficient, -f*n/(f-n)
   float projB;  // Precomputed coefficient, -f/(f-n)
@@ -174,11 +175,13 @@ void main()
   float depth       = texture(depthBuffer, uv).r;
   float linearDepth = params.projA / (depth + params.projB);
   vec2  ndcPos      = 2.0f * uv - 1.0f;
-  vec3  wsFragRay   = camera.wsForward + camera.wsRight * ndcPos.x - camera.wsUp * ndcPos.y;
+  vec3  wsFragRay   = camera.wsForward + camera.wsRight * ndcPos.x * params.aspect - camera.wsUp * ndcPos.y;
   wsFragRay         = normalize(wsFragRay);
-  point.position    = camera.wsPos + linearDepth * wsFragRay;
+  float viewZDist = dot(camera.wsForward, wsFragRay);
+  point.position    = camera.wsPos + wsFragRay * (linearDepth / viewZDist);
 
-  point.normal      = normalize(texture(gbufferWsNorm, uv).xyz);
+  point.normal      = texture(gbufferWsNorm, uv).xyz;
+  point.normal      = normalize(255.0f / 127.0f * point.normal - 128.0f / 127.0f);
   point.toCam       = normalize(camera.wsPos - point.position);
 
   // Indirect lighting for now

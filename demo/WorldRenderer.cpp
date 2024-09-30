@@ -228,10 +228,6 @@ void WorldRenderer::update(const FramePacket& packet)
     Camera shadowCam;
     shadowCam.lookAt({-8, 10, 8}, {0, 0, 0}, {0, 1, 0});
 
-    pushConstDeferredPass.projA =
-      -shadowCam.zFar * shadowCam.zNear / (shadowCam.zFar - shadowCam.zNear);
-    pushConstDeferredPass.projB = -shadowCam.zFar / (shadowCam.zFar - shadowCam.zNear);
-
     CameraData shadowCamera;
     shadowCamera.view = shadowCam.viewTm();
     shadowCamera.projView = proj * shadowCamera.view;
@@ -247,7 +243,13 @@ void WorldRenderer::update(const FramePacket& packet)
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.projView = packet.mainCam.projTm(aspect) * mainCamera.view;
-    mainCamera.wsPos = glm::vec4(packet.mainCam.position, 0.0f);
+    mainCamera.wsPos = packet.mainCam.position;
+
+    pushConstDeferredPass.aspect = static_cast<float>(resolution.x) / static_cast<float>(resolution.y);
+    pushConstDeferredPass.projA =
+      -packet.mainCam.zFar * packet.mainCam.zNear / (packet.mainCam.zFar - packet.mainCam.zNear);
+    pushConstDeferredPass.projB =
+      -packet.mainCam.zFar / (packet.mainCam.zFar - packet.mainCam.zNear);
 
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();
