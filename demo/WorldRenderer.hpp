@@ -90,9 +90,11 @@ private:
   struct PushConstantDeferredPass {
     glm::uvec2 resolution;
     glm::vec2 invResolution;
-    float aspect;
-    float projA;
-    float projB;
+
+    float proj22;
+    float proj23;
+    float invProj00;
+    float invProj11;
   } pushConstDeferredPass;
 
   /* Debug Preview Pass */

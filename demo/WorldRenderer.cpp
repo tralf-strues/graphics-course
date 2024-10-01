@@ -240,16 +240,17 @@ void WorldRenderer::update(const FramePacket& packet)
   {
     const float aspect = float(resolution.x) / float(resolution.y);
 
+    const auto proj = packet.mainCam.projTm(aspect);
+
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
-    mainCamera.projView = packet.mainCam.projTm(aspect) * mainCamera.view;
+    mainCamera.projView = proj * mainCamera.view;
     mainCamera.wsPos = packet.mainCam.position;
 
-    pushConstDeferredPass.aspect = static_cast<float>(resolution.x) / static_cast<float>(resolution.y);
-    pushConstDeferredPass.projA =
-      -packet.mainCam.zFar * packet.mainCam.zNear / (packet.mainCam.zFar - packet.mainCam.zNear);
-    pushConstDeferredPass.projB =
-      -packet.mainCam.zFar / (packet.mainCam.zFar - packet.mainCam.zNear);
+    pushConstDeferredPass.proj22 = proj[2][2];
+    pushConstDeferredPass.proj23 = proj[3][2];
+    pushConstDeferredPass.invProj00 = 1.0f / proj[0][0];
+    pushConstDeferredPass.invProj11 = 1.0f / proj[1][1];
 
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();

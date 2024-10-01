@@ -139,10 +139,11 @@ layout(push_constant) uniform params_t
 {
   uvec2 resolution;
   vec2 invResolution;
-  float aspect;
 
-  float projA;  // Precomputed coefficient, -f*n/(f-n)
-  float projB;  // Precomputed coefficient, -f/(f-n)
+  float proj22;
+  float proj23;
+  float invProj00; // Precomputed coefficient, 1 / proj[0][0]
+  float invProj11; // Precomputed coefficient, 1 / proj[1][1]
 } params;
 //==================================================================================================
 
@@ -173,12 +174,11 @@ void main()
   // Position reconstruction from depth.
   // Inspired by: https://mynameismjp.wordpress.com/2010/09/05/position-from-depth-3/
   float depth       = texture(depthBuffer, uv).r;
-  float linearDepth = params.projA / (depth + params.projB);
-  vec2  ndcPos      = 2.0f * uv - 1.0f;
-  vec3  wsFragRay   = camera.wsForward + camera.wsRight * ndcPos.x * params.aspect - camera.wsUp * ndcPos.y;
-  wsFragRay         = normalize(wsFragRay);
-  float viewZDist = dot(camera.wsForward, wsFragRay);
-  point.position    = camera.wsPos + wsFragRay * (linearDepth / viewZDist);
+  vec2  ndcXY       = 2.0f * uv - 1.0f;
+  float vsZ         = params.proj23 / (depth - params.proj22);
+  point.position    = camera.wsPos + vsZ * (camera.wsForward -
+                                            camera.wsRight * ndcXY.x * params.invProj00 +
+                                            camera.wsUp    * ndcXY.y * params.invProj11);
 
   point.normal      = texture(gbufferWsNorm, uv).xyz;
   point.normal      = normalize(255.0f / 127.0f * point.normal - 128.0f / 127.0f);
