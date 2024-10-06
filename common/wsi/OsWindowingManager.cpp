@@ -80,7 +80,7 @@ std::unique_ptr<OsWindow> OsWindowingManager::createWindow(OsWindow::CreateInfo 
   auto glfwWindow = glfwCreateWindow(
     static_cast<int>(info.resolution.x),
     static_cast<int>(info.resolution.y),
-    "Sample",
+    "Demo",
     nullptr,
     nullptr);
 
