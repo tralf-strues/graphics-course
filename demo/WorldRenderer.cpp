@@ -26,7 +26,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .addressMode = vk::SamplerAddressMode::eRepeat,
     .name = "linearSampler",
     .minLod = 0.0f,
-    .maxLod = 0.0f, // FIXME (tralf-strues): use mip mapping
+    .maxLod = vk::LodClampNone,
   });
 
   pointSampler = etna::Sampler(etna::Sampler::CreateInfo{
@@ -277,13 +277,17 @@ void WorldRenderer::renderScene(
 
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
+    // NOTE (tralf-strues): Each column of mat3 must be padded by a float, which is why mat3x4
+    // is used here. Note that actually in the shader normalMatrix is declared as mat3
+    // basically just for the simplicity of usage.
     struct PushConstant
     {
       glm::mat4x4 model;
       glm::mat3x4 normalMatrix;
-    } pushConst{
+    } pushConst {
       .model = instanceMatrices[instIdx],
-      .normalMatrix = glm::inverseTranspose(instanceMatrices[instIdx])};
+      .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
+    };
 
     cmd_buf.pushConstants<PushConstant>(
       info.getPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {pushConst});
@@ -577,7 +581,7 @@ void WorldRenderer::renderWorld(
       cmd_buf,
       target_image,
       vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-      vk::AccessFlagBits2::eColorAttachmentWrite,
+      vk::AccessFlagBits2::eColorAttachmentRead,
       vk::ImageLayout::eColorAttachmentOptimal,
       vk::ImageAspectFlagBits::eColor);
 

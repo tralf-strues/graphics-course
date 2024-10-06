@@ -40,11 +40,10 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  mainCam.lookAt({0, 2, 2}, {0, 0, 0}, {0, 1, 0});
+  mainCam.lookAt({0.0f, 2.0f, 2.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
 
-  dirLight.color = glm::vec3(1.0f);
-  dirLight.intensity = 8.5f;
-  dirLight.direction = normalize(glm::vec3(-1, -10, -8));
+  dirLight.radiance = glm::vec3(1.0f) * 3.0f;
+  dirLight.direction = normalize(glm::vec3(-1.0f, -10.0f, -8.0f));
 
   pointLights.resize(5);
 
@@ -73,8 +72,7 @@ void App::run()
         2.0f * static_cast<float>(i) * glm::pi<float>() * invPointLightCount;
 
       auto& light = pointLights[i];
-      light.color = glm::vec3(1.0f, 0.6f, 0.3f);
-      light.intensity = 0.9f;
+      light.radiance = glm::vec3(1.0f, 0.6f, 0.3f) * 2.0f;
       light.radius = 7.0f;
       light.position.x = 3.0f * std::cos(alpha);
       light.position.y = 0.0f;

@@ -65,29 +65,17 @@ vec3 PerturbNormal(vec3 wsNorm, vec3 wsPos, vec2 texCoord)
   return normalize(tbn * map);
 }
 
-// Borrowed from: https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl
-vec3 SRGBtoLinear(vec3 sRGB)
-{
-  bvec3 cutoff = lessThan(sRGB, vec3(0.04045f));
-  vec3 higher = pow((sRGB + vec3(0.055f)) / vec3(1.055f), vec3(2.4f));
-  vec3 lower = sRGB / vec3(12.92f);
-
-  return mix(higher, lower, cutoff);
-}
-
 void main()
 {
-  // FIXME (tralf-strues): Use separate texture formats for different textures, this way
-  // there won't be a need to manually convert between srgb and linear
-  vec3 emissive = SRGBtoLinear(texture(texEmissive, vertex.texCoord).rgb);
+  vec3 emissive = texture(texEmissive, vertex.texCoord).rgb;
 
   /* Albedo */
-  out_albedoEmissiveR = vec4(SRGBtoLinear(texture(texAlbedo, vertex.texCoord).rgb), emissive.r);
+  out_albedoEmissiveR = vec4(texture(texAlbedo, vertex.texCoord).rgb, emissive.r);
 
   /* Metalness & Roughness */
   out_metalnessRoughnessEmissiveGB = vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, emissive.gb);
 
   /* Normal */
-  vec3 perturbedNormal = PerturbNormal(vertex.wsNorm, vertex.wsPos, vertex.texCoord);
-  out_wsNorm = vec4(2.0f * perturbedNormal + 1.0f, 0.0f);
+  vec3 perturbedNormal = PerturbNormal(normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);
+  out_wsNorm = vec4(0.5f * perturbedNormal + 0.5f, 0.0f);
 }

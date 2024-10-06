@@ -5,20 +5,20 @@
 
 struct DirectionalLight
 {
-  shader_vec3 color;
-  float intensity;
+  shader_vec3 radiance;
+  float _pad0;
 
   shader_vec3 direction;
-  float _pad0;
+  float _pad1;
 };
 
 struct PointLight
 {
-  shader_vec3 color;
-  float intensity;
+  shader_vec3 radiance;
+  float radius;
 
   shader_vec3 position;
-  float radius;
+  float _pad0;
 };
 
 #endif // LIGHT_H_INCLUDED

@@ -11,36 +11,128 @@
 #include <etna/OneShotCmdMgr.hpp>
 #include <etna/Etna.hpp>
 
-namespace
+SceneManager::SceneManager()
+  : oneShotCommands{etna::get_context().createOneShotCmdMgr()}
+  , transferHelper{etna::BlockingTransferHelper::CreateInfo{.stagingSize = 4096 * 4096 * 4}}
 {
+}
 
-etna::Image CreateAndUploadImage(const tinygltf::Image& src, etna::OneShotCmdMgr& cmd_mgr)
+etna::Image SceneManager::createAndUploadImage(const tinygltf::Image& src, vk::Format format)
 {
-  auto uploadCmds = cmd_mgr.start();
+  auto mips = static_cast<uint32_t>(std::floor(std::log2(std::max(src.width, src.height)))) + 1;
 
-  // TODO (tralf-strues): Generate mips!
-  // auto mips = static_cast<uint32_t>(std::floor(std::log2(std::max(src.width, src.height)))) + 1;
-  uint32_t mips = 1U;
+  auto& ctx = etna::get_context();
 
-  // TODO (tralf-strues): well... it is, what it is...
-  // maybe update etna's uploading mechanism in the future
-  auto img = etna::create_image_from_bytes(
-    etna::Image::CreateInfo{
-      .extent =
-        vk::Extent3D{static_cast<uint32_t>(src.width), static_cast<uint32_t>(src.height), 1},
-      .name = src.name,
-      .format = vk::Format::eR8G8B8A8Unorm,
-      .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
-      .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
-      .tiling = vk::ImageTiling::eOptimal,
-      .layers = 1,
-      .mipLevels = mips,
-      .samples = vk::SampleCountFlagBits::e1},
-    uploadCmds,
-    src.image.data());
+  auto img = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{static_cast<uint32_t>(src.width), static_cast<uint32_t>(src.height), 1},
+    .name = src.name,
+    .format = format,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+      vk::ImageUsageFlagBits::eTransferDst,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .tiling = vk::ImageTiling::eOptimal,
+    .layers = 1,
+    .mipLevels = mips,
+    .samples = vk::SampleCountFlagBits::e1,
+  });
 
-  // TODO (tralf-strues): Generate mips!
-  auto cmdBuffer = cmd_mgr.start();
+  transferHelper.uploadImage(
+    *oneShotCommands,
+    img,
+    0,
+    0,
+    std::span<std::byte const>(
+      reinterpret_cast<const std::byte*>(src.image.data()), src.image.size()));
+
+  auto cmdBuffer = oneShotCommands->start();
+  ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
+
+  /* Transition mip 0 to transfer src */
+  etna::set_state(
+    cmdBuffer,
+    img.get(),
+    vk::PipelineStageFlagBits2::eTransfer,
+    vk::AccessFlagBits2::eTransferRead,
+    vk::ImageLayout::eTransferSrcOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::flush_barriers(cmdBuffer);
+
+  /* Transition mips [1, mips - 1] to transfer dst */
+  vk::ImageMemoryBarrier barrier;
+  barrier.setImage(img.get());
+  barrier.setSrcAccessMask(vk::AccessFlagBits::eNone);
+  barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
+  barrier.setOldLayout(vk::ImageLayout::eUndefined);
+  barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
+  barrier.setSubresourceRange(vk::ImageSubresourceRange{
+    vk::ImageAspectFlagBits::eColor,
+    /*baseMip=*/1,
+    /*levelCount=*/mips - 1,
+    0,
+    1,
+  });
+
+  cmdBuffer.pipelineBarrier(
+    vk::PipelineStageFlagBits::eTopOfPipe,
+    vk::PipelineStageFlagBits::eTransfer,
+    {},
+    {},
+    {},
+    barrier);
+
+  for (uint32_t mip = 1; mip < mips; ++mip) {
+    uint32_t mipWidth = src.width >> mip;
+    uint32_t mipHeight = src.height >> mip;
+
+    vk::ImageBlit blit;
+    blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+    blit.srcOffsets[1] = vk::Offset3D{
+      static_cast<int32_t>(mipWidth << 1),
+      static_cast<int32_t>(mipHeight << 1),
+      1,
+    };
+
+    blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+    blit.dstOffsets[1] = vk::Offset3D{
+      static_cast<int32_t>(mipWidth),
+      static_cast<int32_t>(mipHeight),
+      1,
+    };
+
+    blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, mip - 1, 0, 1});
+    blit.setDstSubresource({vk::ImageAspectFlagBits::eColor, mip, 0, 1});
+
+    cmdBuffer.blitImage(
+      img.get(),
+      vk::ImageLayout::eTransferSrcOptimal,
+      img.get(),
+      vk::ImageLayout::eTransferDstOptimal,
+      blit,
+      vk::Filter::eLinear);
+
+    /* Transition mip to transfer src */
+    barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
+    barrier.setDstAccessMask(vk::AccessFlagBits::eTransferRead);
+    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
+    barrier.setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
+    barrier.setSubresourceRange(vk::ImageSubresourceRange{
+      vk::ImageAspectFlagBits::eColor,
+      /*baseMip=*/mip,
+      /*levelCount=*/1,
+      0,
+      1,
+    });
+
+    cmdBuffer.pipelineBarrier(
+      vk::PipelineStageFlagBits::eTransfer,
+      vk::PipelineStageFlagBits::eTransfer,
+      {},
+      {},
+      {},
+      barrier);
+  }
+
   etna::set_state(
     cmdBuffer,
     img.get(),
@@ -49,15 +141,12 @@ etna::Image CreateAndUploadImage(const tinygltf::Image& src, etna::OneShotCmdMgr
     vk::ImageLayout::eShaderReadOnlyOptimal,
     vk::ImageAspectFlagBits::eColor);
 
+  etna::flush_barriers(cmdBuffer);
+
+  ETNA_CHECK_VK_RESULT(cmdBuffer.end());
+  oneShotCommands->submitAndWait(std::move(cmdBuffer));
+
   return img;
-}
-
-} // end of anonymous namespace
-
-SceneManager::SceneManager()
-  : oneShotCommands{etna::get_context().createOneShotCmdMgr()}
-  , transferHelper{etna::BlockingTransferHelper::CreateInfo{.stagingSize = 4096 * 4096 * 4}}
-{
 }
 
 std::optional<tinygltf::Model> SceneManager::loadModel(std::filesystem::path path)
@@ -97,15 +186,10 @@ std::optional<tinygltf::Model> SceneManager::loadModel(std::filesystem::path pat
   return model;
 }
 
-SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::Model& model) const
+SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::Model& model)
 {
   SceneManager::ProcessedMaterials result;
-
-  result.textures.reserve(model.images.size());
-  for (const auto& srcImg : model.images)
-  {
-    result.textures.push_back(CreateAndUploadImage(srcImg, *oneShotCommands));
-  }
+  result.textures.resize(model.images.size());
 
   result.materials.reserve(model.materials.size());
   for (const auto& srcMat : model.materials)
@@ -113,10 +197,23 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     const auto& pbr = srcMat.pbrMetallicRoughness;
 
     auto& mat = result.materials.emplace_back();
-    mat.texAlbedo = &result.textures[pbr.baseColorTexture.index];
-    mat.texMetalnessRoughness = &result.textures[pbr.metallicRoughnessTexture.index];
-    mat.texNorm = &result.textures[srcMat.normalTexture.index];
-    mat.texEmissive = &result.textures[srcMat.emissiveTexture.index];
+
+    const auto setTexture =
+      [this, &result, &model](std::size_t idx, vk::Format format) -> etna::Image* {
+      if (result.textures[idx].get() == nullptr)
+      {
+        result.textures[idx] =
+          this->createAndUploadImage(model.images[idx], format);
+      }
+
+      return &result.textures[idx];
+    };
+
+    mat.texAlbedo = setTexture(pbr.baseColorTexture.index, vk::Format::eR8G8B8A8Srgb);
+    mat.texMetalnessRoughness =
+      setTexture(pbr.metallicRoughnessTexture.index, vk::Format::eR8G8B8A8Unorm);
+    mat.texNorm = setTexture(srcMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm);
+    mat.texEmissive = setTexture(srcMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb);
 
     mat.colorAlbedo = glm::make_vec3(pbr.baseColorFactor.data());
     mat.metalness = static_cast<float>(pbr.metallicFactor);

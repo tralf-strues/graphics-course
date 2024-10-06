@@ -66,6 +66,8 @@ public:
   etna::VertexByteStreamFormatDescription getVertexFormatDescription();
 
 private:
+  etna::Image createAndUploadImage(const tinygltf::Image& src, vk::Format format);
+
   std::optional<tinygltf::Model> loadModel(std::filesystem::path path);
 
   struct ProcessedMaterials
@@ -73,7 +75,7 @@ private:
     std::vector<etna::Image> textures;
     std::vector<Material> materials;
   };
-  ProcessedMaterials processMaterials(const tinygltf::Model& model) const;
+  ProcessedMaterials processMaterials(const tinygltf::Model& model);
 
   struct ProcessedInstances
   {
