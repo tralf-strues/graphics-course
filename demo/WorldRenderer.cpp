@@ -230,6 +230,7 @@ void WorldRenderer::update(const FramePacket& packet)
 
     CameraData shadowCamera;
     shadowCamera.view = shadowCam.viewTm();
+    shadowCamera.proj = proj;
     shadowCamera.projView = proj * shadowCamera.view;
     shadowCamera.wsPos = glm::vec4(shadowCam.position, 0.0f);
 
@@ -244,6 +245,7 @@ void WorldRenderer::update(const FramePacket& packet)
 
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
+    mainCamera.proj = proj;
     mainCamera.projView = proj * mainCamera.view;
     mainCamera.wsPos = packet.mainCam.position;
 
@@ -631,8 +633,6 @@ void WorldRenderer::renderWorld(
 
 void WorldRenderer::drawGui()
 {
-  ImGui::Begin("Demo settings");
-
   // float color[3]{uniformParams.baseColor.r, uniformParams.baseColor.g,
   // uniformParams.baseColor.b}; ImGui::ColorEdit3(
   //   "Meshes base color", color, ImGuiColorEditFlags_PickerHueWheel |
@@ -643,6 +643,8 @@ void WorldRenderer::drawGui()
   // ImGui::SliderFloat3("Light source position", pos, -10.f, 10.f);
   // uniformParams.lightPos = {pos[0], pos[1], pos[2]};
 
+  ImGui::SeparatorText("World Renderer");
+
   ImGui::Text(
     "Application average %.3f ms/frame (%.1f FPS)",
     1000.0f / ImGui::GetIO().Framerate,
@@ -651,5 +653,4 @@ void WorldRenderer::drawGui()
   ImGui::NewLine();
 
   ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press 'B' to recompile and reload shaders");
-  ImGui::End();
 }

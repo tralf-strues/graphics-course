@@ -29,6 +29,9 @@ if (ImGui_ADDED)
     ${ImGui_SOURCE_DIR}/imgui_tables.cpp ${ImGui_SOURCE_DIR}/imgui_widgets.cpp
     ${ImGui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp ${ImGui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp)
 
+  set_property(TARGET DearImGui PROPERTY CXX_STANDARD 20)
+  set_property(TARGET DearImGui PROPERTY CMAKE_CXX_STANDARD_REQUIRED True)
+
   target_include_directories(DearImGui PUBLIC ${ImGui_SOURCE_DIR})
 
   target_link_libraries(DearImGui Vulkan::Vulkan)
@@ -54,7 +57,7 @@ CPMAddPackage(
 CPMAddPackage(
   NAME etna
   GITHUB_REPOSITORY AlexandrShcherbakov/etna
-  VERSION 1.5.1
+  VERSION 1.6.2
 )
 
 # Type-erased function containers that actually work

@@ -9,6 +9,7 @@
 
 #include "FramePacket.hpp"
 #include "WorldRenderer.hpp"
+#include "DemoDebugRenderer.hpp"
 
 
 class ImGuiRenderer;
@@ -33,6 +34,11 @@ public:
 
   void debugInput(const Keyboard& kb);
   void update(const FramePacket& packet);
+
+  void beginGuiFrame();
+  void onGuiFrame();
+  void endGuiFrame();
+
   void drawFrame();
 
 private:
@@ -44,4 +50,5 @@ private:
   std::unique_ptr<ImGuiRenderer> guiRenderer;
 
   std::unique_ptr<WorldRenderer> worldRenderer;
+  std::unique_ptr<DemoDebugRenderer> demoDebugRenderer;
 };

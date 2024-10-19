@@ -27,7 +27,7 @@ void Renderer::initVulkan(std::span<const char*> instance_extensions)
   deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
   etna::initialize(etna::InitParams{
-    .applicationName = "ShadowmapSample",
+    .applicationName = "Demo",
     .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
     .instanceExtensions = instanceExtensions,
     .deviceExtensions = deviceExtensions,
@@ -57,10 +57,14 @@ void Renderer::initFrameDelivery(vk::UniqueSurfaceKHR a_surface, ResolutionProvi
   resolution = {w, h};
 
   worldRenderer = std::make_unique<WorldRenderer>();
-
   worldRenderer->allocateResources(resolution);
   worldRenderer->loadShaders();
   worldRenderer->setupPipelines(window->getCurrentFormat());
+
+  demoDebugRenderer = std::make_unique<DemoDebugRenderer>();
+  demoDebugRenderer->allocateResources(resolution);
+  demoDebugRenderer->loadShaders();
+  demoDebugRenderer->setupPipelines(window->getCurrentFormat());
 
   guiRenderer = std::make_unique<ImGuiRenderer>(window->getCurrentFormat());
 }
@@ -79,14 +83,17 @@ void Renderer::recreateSwapchain(glm::uvec2 res)
 
   // Most resources depend on the current resolution, so we recreate them.
   worldRenderer->allocateResources(resolution);
+  demoDebugRenderer->allocateResources(resolution);
 
   // Format of the swapchain CAN change on android
   worldRenderer->setupPipelines(window->getCurrentFormat());
+  demoDebugRenderer->setupPipelines(window->getCurrentFormat());
 }
 
 void Renderer::loadScene(std::filesystem::path path)
 {
   worldRenderer->loadScene(path);
+  demoDebugRenderer->loadScene(path);
 }
 
 void Renderer::debugInput(const Keyboard& kb)
@@ -111,19 +118,28 @@ void Renderer::debugInput(const Keyboard& kb)
 void Renderer::update(const FramePacket& packet)
 {
   worldRenderer->update(packet);
+  demoDebugRenderer->update(packet);
+}
+
+void Renderer::beginGuiFrame()
+{
+  guiRenderer->nextFrame();
+  ImGui::NewFrame();
+}
+
+void Renderer::onGuiFrame()
+{
+  worldRenderer->drawGui();
+}
+
+void Renderer::endGuiFrame()
+{
+  ImGui::Render();
 }
 
 void Renderer::drawFrame()
 {
   ZoneScoped;
-
-  {
-    ZoneScopedN("drawGui");
-    guiRenderer->nextFrame();
-    ImGui::NewFrame();
-    worldRenderer->drawGui();
-    ImGui::Render();
-  }
 
   auto currentCmdBuf = commandManager->acquireNext();
 
@@ -145,7 +161,8 @@ void Renderer::drawFrame()
     {
       ETNA_PROFILE_GPU(currentCmdBuf, renderFrame);
 
-      worldRenderer->renderWorld(currentCmdBuf, image, view);
+      // worldRenderer->renderWorld(currentCmdBuf, image, view);
+      demoDebugRenderer->renderWorld(currentCmdBuf, image, view);
 
       {
         ImDrawData* pDrawData = ImGui::GetDrawData();

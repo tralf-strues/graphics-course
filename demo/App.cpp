@@ -1,6 +1,7 @@
 #include "App.hpp"
 
 #include <tracy/Tracy.hpp>
+#include <imgui.h>
 
 #include "gui/ImGuiRenderer.hpp"
 
@@ -111,6 +112,18 @@ void App::drawFrame()
 {
   ZoneScoped;
 
+  {
+    ZoneScopedN("drawGui");
+    renderer->beginGuiFrame();
+
+    ImGui::Begin("Settings");
+    onGuiFrame();
+    renderer->onGuiFrame();
+    ImGui::End();
+
+    renderer->endGuiFrame();
+  }
+
   renderer->update(FramePacket{
     .mainCam = mainCam,
     .currentTime = static_cast<float>(windowing.getTime()),
@@ -118,6 +131,11 @@ void App::drawFrame()
     .dirLight = dirLight,
   });
   renderer->drawFrame();
+}
+
+void App::onGuiFrame()
+{
+  ImGui::SeparatorText("Application");
 }
 
 void App::moveCam(Camera& cam, const Keyboard& kb, float dt)
