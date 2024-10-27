@@ -99,6 +99,7 @@ void Renderer::loadScene(std::filesystem::path path)
 void Renderer::debugInput(const Keyboard& kb)
 {
   worldRenderer->debugInput(kb);
+  demoDebugRenderer->debugInput(kb);
 
   if (kb[KeyboardKey::kB] == ButtonState::Falling)
   {
@@ -129,7 +130,8 @@ void Renderer::beginGuiFrame()
 
 void Renderer::onGuiFrame()
 {
-  worldRenderer->drawGui();
+  // worldRenderer->drawGui();
+  demoDebugRenderer->drawGui();
 }
 
 void Renderer::endGuiFrame()

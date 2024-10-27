@@ -30,12 +30,13 @@ public:
     vk::CommandBuffer cmd_buf, vk::Image target_image, vk::ImageView target_image_view);
 
 private:
-  void loadCubemap(std::filesystem::path path);
+  etna::Image loadCubemap(std::filesystem::path path);
 
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
 private:
-  constexpr static glm::uvec2 CUBEMAP_RESOLUTION = {1024U, 1024U};
+  constexpr static glm::uvec2 CUBEMAP_RESOLUTION = {512U, 512U};
+  constexpr static vk::Format TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
 
   std::unique_ptr<SceneManager> sceneMgr;
 
@@ -47,11 +48,17 @@ private:
   etna::GraphicsPipeline demoDiffuseIndirectPipeline;
   etna::GraphicsPipeline renderCubemapPipeline;
 
+  std::array<etna::Image, 2> temporalDiffuseIrradiance;
+  size_t temporalCount = 0U;
+
   etna::Buffer cameraData;
   etna::Image depth;
 
   etna::ComputePipeline convertCubemapPipeline;
   std::unique_ptr<etna::OneShotCmdMgr> oneShotCommands;
   etna::BlockingTransferHelper transferHelper;
-  etna::Image cubemap;
+
+  std::vector<etna::Image> cubemaps;
+  int32_t currentCubemapIdx = 0;
+  int32_t newCubemapIdx = 0;
 };

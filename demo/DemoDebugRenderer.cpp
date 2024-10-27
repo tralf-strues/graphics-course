@@ -1,6 +1,7 @@
 #include "DemoDebugRenderer.hpp"
 
 #include "shaders/CameraData.h"
+#include "render_utils/Utils.hpp"
 
 #include <etna/GlobalContext.hpp>
 #include <etna/PipelineManager.hpp>
@@ -9,6 +10,18 @@
 #include <glm/ext.hpp>
 #include <imgui.h>
 #include <stb_image.h>
+
+constexpr std::array CUBEMAP_NAMES = {
+  "Fireplace",
+  "Circus Arena",
+  "Small Cathedral",
+};
+
+constexpr std::array CUBEMAP_FILEPATHS = {
+  GRAPHICS_COURSE_RESOURCES_ROOT "/textures/fireplace_1k.hdr",
+  GRAPHICS_COURSE_RESOURCES_ROOT "/textures/circus_arena_2k.hdr",
+  GRAPHICS_COURSE_RESOURCES_ROOT "/textures/small_cathedral_2k.hdr",
+};
 
 DemoDebugRenderer::DemoDebugRenderer()
   : sceneMgr{std::make_unique<SceneManager>()}
@@ -54,13 +67,26 @@ void DemoDebugRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .imageUsage =
       vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
   });
+
+  for (auto &img : temporalDiffuseIrradiance)
+  {
+    img = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "temporalDiffuseIrradiance",
+      .format = TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT,
+      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+        vk::ImageUsageFlagBits::eTransferDst,
+    });
+  }
 }
 
 void DemoDebugRenderer::loadScene(std::filesystem::path path)
 {
   sceneMgr->selectScene(path);
 
-  loadCubemap(GRAPHICS_COURSE_RESOURCES_ROOT "/textures/fireplace_1k.hdr");
+  for (const auto& cubemapPath : CUBEMAP_FILEPATHS) {
+    cubemaps.push_back(std::move(loadCubemap(cubemapPath)));
+  }
 }
 
 void DemoDebugRenderer::loadShaders()
@@ -105,10 +131,10 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
           .lineWidth = 1.f,
         },
       .blendingConfig =
-        {.attachments = {BLEND_STATE}, .logicOpEnable = false, .logicOp = vk::LogicOp::eAnd},
+        {.attachments = {BLEND_STATE, BLEND_STATE}, .logicOpEnable = false, .logicOp = vk::LogicOp::eAnd},
       .fragmentShaderOutput =
         {
-          .colorAttachmentFormats = {swapchain_format},
+          .colorAttachmentFormats = {swapchain_format, TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT},
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
     });
@@ -126,7 +152,7 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
           .lineWidth = 1.f,
         },
       .blendingConfig =
-        {.attachments = {BLEND_STATE}, .logicOpEnable = false, .logicOp = vk::LogicOp::eAnd},
+        {.attachments = {BLEND_STATE, BLEND_STATE}, .logicOpEnable = false, .logicOp = vk::LogicOp::eAnd},
 
       .depthConfig =
         {
@@ -139,7 +165,7 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
 
       .fragmentShaderOutput =
         {
-          .colorAttachmentFormats = {swapchain_format},
+          .colorAttachmentFormats = {swapchain_format, TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT},
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
     });
@@ -148,7 +174,7 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
   convertCubemapPipeline = pipelineManager.createComputePipeline("convert_cubemap", {});
 }
 
-void DemoDebugRenderer::loadCubemap(std::filesystem::path path)
+etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
 {
   int width, height, nrComponents;
   float* data = stbi_loadf(path.string().c_str(), &width, &height, &nrComponents, 4);
@@ -168,15 +194,20 @@ void DemoDebugRenderer::loadCubemap(std::filesystem::path path)
     .samples = vk::SampleCountFlagBits::e1,
   });
 
-  cubemap = ctx.createImage(etna::Image::CreateInfo{
+  // auto mips =
+  //   static_cast<uint32_t>(std::floor(std::log2(std::max(CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y)))) + 1;
+  uint32_t mips = 1;
+
+  auto cubemap = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y, 1},
     .name = "cubemap",
-    .format = vk::Format::eR16G16B16A16Sfloat,
-    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage,
+    .format = vk::Format::eR32G32B32A32Sfloat,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
+      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
     .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
     .tiling = vk::ImageTiling::eOptimal,
     .layers = 6U,
-    .mipLevels = 1,
+    .mipLevels = mips,
     .samples = vk::SampleCountFlagBits::e1,
     .type = vk::ImageType::e2D,
     .flags = vk::ImageCreateFlagBits::eCubeCompatible,
@@ -258,8 +289,12 @@ void DemoDebugRenderer::loadCubemap(std::filesystem::path path)
 
   cmdBuffer.dispatch((CUBEMAP_RESOLUTION.x + 15) / 16, (CUBEMAP_RESOLUTION.y + 15) / 16, 6);
 
+  // generate_mips(cmdBuffer, cubemap);
+
   ETNA_CHECK_VK_RESULT(cmdBuffer.end());
   oneShotCommands->submitAndWait(std::move(cmdBuffer));
+
+  return cubemap;
 }
 
 void DemoDebugRenderer::debugInput(const Keyboard& kb)
@@ -273,11 +308,26 @@ void DemoDebugRenderer::debugInput(const Keyboard& kb)
   {
     // TODO: rotate cubemap
   }
+
+  if (kb[KeyboardKey::kR] == ButtonState::Falling)
+  {
+    temporalCount = 0;
+  }
 }
 
 void DemoDebugRenderer::update(const FramePacket& packet)
 {
   ZoneScoped;
+
+  if (packet.cameraMoved)
+  {
+    temporalCount = 0;
+  }
+
+  if (newCubemapIdx != currentCubemapIdx) {
+    currentCubemapIdx = newCubemapIdx;
+    temporalCount = 0;
+  }
 
   // calc main view camera
   {
@@ -314,6 +364,8 @@ void DemoDebugRenderer::renderScene(
   auto meshes = sceneMgr->getMeshes();
   auto relems = sceneMgr->getRenderElements();
 
+  auto& cubemap = cubemaps[currentCubemapIdx];
+
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
     // NOTE (tralf-strues): Each column of mat3 must be padded by a float, which is why mat3x4
@@ -323,13 +375,15 @@ void DemoDebugRenderer::renderScene(
     {
       glm::mat4x4 model;
       glm::mat3x4 normalMatrix;
+      uint32_t temporalCount;
     } pushConst {
       .model = instanceMatrices[instIdx],
       .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
+      .temporalCount = static_cast<uint32_t>(temporalCount)
     };
 
     cmd_buf.pushConstants<PushConstant>(
-      info.getPipelineLayout(), vk::ShaderStageFlagBits::eVertex, 0, {pushConst});
+      info.getPipelineLayout(), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, {pushConst});
 
     const auto meshIdx = instanceMeshes[instIdx];
 
@@ -368,12 +422,16 @@ void DemoDebugRenderer::renderScene(
                 vk::ImageLayout::eShaderReadOnlyOptimal,
                 etna::Image::ViewParams{
                   0,
-                  1,
+                  vk::RemainingMipLevels,
                   0,
-                  6,
+                  vk::RemainingArrayLayers,
                   {},
                   vk::ImageViewType::eCube,
                 })},
+            etna::Binding{
+              5,
+              temporalDiffuseIrradiance[temporalCount % 2].genBinding(
+                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
           });
 
         cmd_buf.bindDescriptorSets(
@@ -394,8 +452,46 @@ void DemoDebugRenderer::renderWorld(
 {
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
+  auto& cubemap = cubemaps[currentCubemapIdx];
+
   {
     ETNA_PROFILE_GPU(cmd_buf, demoDiffuseIndirect);
+
+    size_t temporalInput = temporalCount % 2;
+    size_t temporalOutput = (temporalCount + 1) % 2;
+
+    if (temporalCount == 0)
+    {
+      etna::set_state(
+        cmd_buf,
+        temporalDiffuseIrradiance[temporalInput].get(),
+        vk::PipelineStageFlagBits2::eTransfer,
+        vk::AccessFlagBits2::eTransferWrite,
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::ImageAspectFlagBits::eColor);
+      etna::flush_barriers(cmd_buf);
+
+      cmd_buf.clearColorImage(
+        temporalDiffuseIrradiance[temporalInput].get(),
+        vk::ImageLayout::eTransferDstOptimal,
+        vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f},
+        vk::ImageSubresourceRange{
+          vk::ImageAspectFlagBits::eColor,
+          0,
+          1,
+          0,
+          1,
+        });
+    }
+
+    etna::set_state(
+      cmd_buf,
+      temporalDiffuseIrradiance[temporalInput].get(),
+      vk::PipelineStageFlagBits2::eFragmentShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+    etna::flush_barriers(cmd_buf);
 
     auto demoPassInfo = etna::get_shader_program("demo_diffuse_indirect");
     auto cameraSet = etna::create_descriptor_set(
@@ -417,9 +513,9 @@ void DemoDebugRenderer::renderWorld(
             vk::ImageLayout::eShaderReadOnlyOptimal,
             etna::Image::ViewParams{
               0,
-              1,
+              vk::RemainingMipLevels,
               0,
-              6,
+              vk::RemainingArrayLayers,
               {},
               vk::ImageViewType::eCube,
             })},
@@ -433,6 +529,12 @@ void DemoDebugRenderer::renderWorld(
         {
           .image = target_image,
           .view = target_image_view,
+          .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
+        },
+
+        {
+          .image = temporalDiffuseIrradiance[temporalOutput].get(),
+          .view = temporalDiffuseIrradiance[temporalOutput].getView({}),
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         }
       },
@@ -466,6 +568,8 @@ void DemoDebugRenderer::renderWorld(
 
     cmd_buf.draw(36, 1, 0, 0);
   }
+
+  ++temporalCount;
 }
 
 void DemoDebugRenderer::drawGui()
@@ -479,5 +583,10 @@ void DemoDebugRenderer::drawGui()
 
   ImGui::NewLine();
 
+  ImGui::Combo("Cubemap", &newCubemapIdx, CUBEMAP_NAMES.data(), static_cast<int32_t>(CUBEMAP_NAMES.size()));
+
+  ImGui::NewLine();
+
   ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press 'B' to recompile and reload shaders");
+  ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press 'R' to reset diffuse irradiance accumulation");
 }

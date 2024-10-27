@@ -18,6 +18,7 @@ layout(push_constant) uniform params_t
 {
   mat4 model;
   mat3 normalMatrix;
+  uint temporalCount;
 } params;
 //==================================================================================================
 

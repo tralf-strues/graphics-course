@@ -35,6 +35,7 @@ private:
   float camRotateSpeed = 0.1f;
   float zoomSensitivity = 2.0f;
   Camera mainCam;
+  bool cameraMoved = false;
 
   DirectionalLight dirLight;
   std::vector<PointLight> pointLights;

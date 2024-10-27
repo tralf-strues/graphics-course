@@ -8,7 +8,7 @@ const float INV_PI     = 1.0f / PI;
 const float INV_TWO_PI = 1.0f / TWO_PI;
 
 layout(set = 0, binding = 0) uniform sampler2D environmentRect;
-layout(set = 0, binding = 1, rgba16f) uniform writeonly imageCube out_environmentCube;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly imageCube out_environmentCube;
 
 layout(push_constant) uniform params_t
 {

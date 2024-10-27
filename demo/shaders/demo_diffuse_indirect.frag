@@ -5,6 +5,7 @@
 #include "CameraData.h"
 #include "NormalPerturbation.glsl"
 #include "PBR.glsl"
+#include "Random.glsl"
 
 //==================================================================================================
 // Descriptor bindings / push constants
@@ -20,6 +21,14 @@ layout(set = 1, binding = 2) uniform sampler2D texNorm;
 layout(set = 1, binding = 3) uniform sampler2D texEmissive;
 
 layout(set = 1, binding = 4) uniform samplerCube cubemap;
+layout(set = 1, binding = 5) uniform sampler2D temporalDiffuseIrradiance;
+
+layout(push_constant) uniform params_t
+{
+  mat4 model;
+  mat3 normalMatrix;
+  uint temporalCount;
+} params;
 //==================================================================================================
 
 //==================================================================================================
@@ -33,13 +42,11 @@ layout(location = 0) in vs_out_t
 } vertex;
 
 layout(location = 0) out vec4 out_color;
+layout(location = 1) out vec4 out_temporalDiffuseIrradiance;
 //==================================================================================================
 
 void main()
 {
-  const float DELTA        = 0.35f;
-  const vec2  SAMPLE_COUNT = vec2(TWO_PI / DELTA, HALF_PI / DELTA);
-
   vec3 emissive = texture(texEmissive, vertex.texCoord).rgb;
 
   SurfacePoint point;
@@ -52,26 +59,27 @@ void main()
   // point.f0        = vec3(0.04f);
   // point.f0        = mix(point.f0, point.albedo, point.metalness);
 
-  vec3 brdf       = LambertianDiffuseBRDF(point);
+  uint seed = (uint(gl_FragCoord.x) * uint(1973) + uint(gl_FragCoord.y) * uint(9277) +
+    uint(params.temporalCount) * uint(26699)) | uint(1);
 
-  vec3 tang       = vec3(1.0f, 0.0f, 0.0f);
-  vec3 bitang     = normalize(cross(point.normal, tang));
-  tang            = normalize(cross(bitang, point.normal));
+  vec2 resolution     = vec2(textureSize(temporalDiffuseIrradiance, 0).xy);
+  vec2 fragUV         = gl_FragCoord.xy / resolution;
+  vec3 prevIrradiance = texture(temporalDiffuseIrradiance, fragUV).rgb;
 
-  vec3 L0 = vec3(0.0f);
-  for (float angle1 = 0.0f; angle1 < TWO_PI; angle1 += DELTA)
+  const uint SAMPLES = 16;
+
+  vec3 newIrradiance = vec3(0.0f);
+  for (uint i = 0; i < SAMPLES; ++i)
   {
-    for (float angle2 = 0.0f; angle2 < HALF_PI; angle2 += DELTA)
-    {
-      vec3 dir = vec3(sin(angle2) * cos(angle1), sin(angle2) * sin(angle1), cos(angle2));
-      dir = mat3(tang, bitang, point.normal) * dir;
-
-      L0 += texture(cubemap, dir).rgb * max(dot(point.normal, dir), 0.0f) * sin(angle2);
-    }
+    vec3 dir = normalize(point.normal + RandomUnitVector(seed));
+    newIrradiance += textureLod(cubemap, dir, 0.0f).rgb * max(dot(point.normal, dir), 0.0f);
   }
 
-  L0 *= brdf;
-  L0 /= (SAMPLE_COUNT.x * SAMPLE_COUNT.y);
+  newIrradiance = (prevIrradiance * float(params.temporalCount) + newIrradiance) / float(params.temporalCount + 1);
+  out_temporalDiffuseIrradiance = vec4(newIrradiance, 1.0f);
+
+  vec3 L0 = newIrradiance / float(SAMPLES);
+  L0 *= LambertianDiffuseBRDF(point);
 
   out_color = vec4(L0, 1.0f);
 }
