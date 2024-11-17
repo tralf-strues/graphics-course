@@ -39,6 +39,8 @@ void main()
                 else if (face == 4) { dir = vec3( uv.x, uv.y,  1.0f); }
                 else                { dir = vec3(-uv.x, uv.y, -1.0f); }
 
+                dir = normalize(dir);
+
                 float Y_lm[9] = {
                     0.282095,
                     0.488603 * dir.x,

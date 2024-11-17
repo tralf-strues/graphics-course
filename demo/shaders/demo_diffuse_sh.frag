@@ -57,22 +57,17 @@ void main()
   SurfacePoint point;
   point.normal    = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);
   point.position  = vertex.wsPos;
-  // point.toCam     = normalize(camera.wsPos - point.position);
   point.albedo    = texture(texAlbedo, vertex.texCoord).rgb;
-  // point.metalness = texture(texMetalnessRoughness, vertex.texCoord).b;
-  // point.roughness = texture(texMetalnessRoughness, vertex.texCoord).g;
-  // point.f0        = vec3(0.04f);
-  // point.f0        = mix(point.f0, point.albedo, point.metalness);
 
-  float Y00     = 0.282095;
-  float Y11     = 0.488603 * point.normal.x;
-  float Y10     = 0.488603 * point.normal.z;
-  float Y1_1    = 0.488603 * point.normal.y;
-  float Y21     = 1.092548 * point.normal.x * point.normal.z;
-  float Y2_1    = 1.092548 * point.normal.y * point.normal.z;
-  float Y2_2    = 1.092548 * point.normal.y * point.normal.x;
-  float Y20     = 0.946176 * point.normal.z * point.normal.z - 0.315392;
-  float Y22     = 0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y);
+  float Y00  = 0.282095;
+  float Y11  = 0.488603 * point.normal.x;
+  float Y10  = 0.488603 * point.normal.z;
+  float Y1_1 = 0.488603 * point.normal.y;
+  float Y21  = 1.092548 * point.normal.x * point.normal.z;
+  float Y2_1 = 1.092548 * point.normal.y * point.normal.z;
+  float Y2_2 = 1.092548 * point.normal.y * point.normal.x;
+  float Y20  = 0.946176 * point.normal.z * point.normal.z - 0.315392;
+  float Y22  = 0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y);
 
   vec3 L00   = vec3(sphericalHarmonicCoeffs[0 ], sphericalHarmonicCoeffs[0  + 1], sphericalHarmonicCoeffs[0  + 2]);
   vec3 L11   = vec3(sphericalHarmonicCoeffs[3 ], sphericalHarmonicCoeffs[3  + 1], sphericalHarmonicCoeffs[3  + 2]);
