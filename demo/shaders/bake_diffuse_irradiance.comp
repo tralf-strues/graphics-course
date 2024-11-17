@@ -19,9 +19,7 @@ void main()
     uvec2 resolution = textureSize(environmentCubemap, 0);
     vec2 invResolution = 1.0f / vec2(resolution);
 
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 0] = 0.0f;
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 1] = 0.0f;
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 2] = 0.0f;
+    vec3 L_lm = vec3(0.0f);
 
     for (uint face = 0; face < 6; ++face)
     {
@@ -41,7 +39,7 @@ void main()
                 else if (face == 4) { dir = vec3( uv.x, uv.y,  1.0f); }
                 else                { dir = vec3(-uv.x, uv.y, -1.0f); }
 
-                float Ylm[9] = {
+                float Y_lm[9] = {
                     0.282095,
                     0.488603 * dir.x,
                     0.488603 * dir.z,
@@ -54,61 +52,15 @@ void main()
                 };
 
                 vec3 L = texture(environmentCubemap, dir).rgb;
-                vec3 Llm = L * Ylm[gl_GlobalInvocationID.x];
-                out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 0] += Llm[0];
-                out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 1] += Llm[1];
-                out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 2] += Llm[2];
-
-                // float Y00  = 0.282095;
-                // float Y11  = 0.488603 * dir.x;
-                // float Y10  = 0.488603 * dir.z;
-                // float Y1_1 = 0.488603 * dir.y;
-                // float Y21  = 1.092548 * dir.x * dir.z;
-                // float Y2_1 = 1.092548 * dir.y * dir.z;
-                // float Y2_2 = 1.092548 * dir.y * dir.x;
-                // float Y20  = 0.946176 * dir.z * dir.z - 0.315392;
-                // float Y22  = 0.546274 * (dir.x * dir.x - dir.y * dir.y);
-
-                // vec3 L     = texture(environmentCubemap, dir).rgb;
-                // vec3 L00   = L * Y00;
-                // vec3 L11   = L * Y11;
-                // vec3 L10   = L * Y10;
-                // vec3 L1_1  = L * Y1_1;
-                // vec3 L21   = L * Y21;
-                // vec3 L2_1  = L * Y2_1;
-                // vec3 L2_2  = L * Y2_2;
-                // vec3 L20   = L * Y20;
-                // vec3 L22   = L * Y22;
-
-                
+                L_lm += L * Y_lm[gl_GlobalInvocationID.x];
             }
         }
     }
 
-    float invSampleCount = 1.0f / float(resolution.x * resolution.y * 6);
+    L_lm /= float(resolution.x * resolution.y * 6);
+    L_lm *= PI;
 
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 0] *= invSampleCount;
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 1] *= invSampleCount;
-    out_sphericalHarmonicCoeffs[gl_GlobalInvocationID.x + 2] *= invSampleCount;
-
-    // uvec2 coord = gl_GlobalInvocationID.xy;
-    // if (coord.x >= resolution.x || coord.y >= resolution.y) {
-    //     return;
-    // }
-
-    // vec2 uv = (vec2(coord) + 0.5f) / vec2(resolution);
-    // uv.y = 1.0f - uv.y;
-    // uv = 2.0f * uv - 1.0f;
-
-    // vec3 dir;
-
-    // uint face = gl_WorkGroupID.z;
-    // if      (face == 0) { dir = vec3( 1.0f, uv.y, -uv.x); }
-    // else if (face == 1) { dir = vec3(-1.0f, uv.y,  uv.x); }
-    // else if (face == 2) { dir = vec3( uv.x, 1.0f, -uv.y); }
-    // else if (face == 3) { dir = vec3( uv.x,-1.0f,  uv.y); }
-    // else if (face == 4) { dir = vec3( uv.x, uv.y,  1.0f); }
-    // else                { dir = vec3(-uv.x, uv.y, -1.0f); }
-
-    // dir = normalize(dir);
+    out_sphericalHarmonicCoeffs[3 * gl_GlobalInvocationID.x + 0] = L_lm[0];
+    out_sphericalHarmonicCoeffs[3 * gl_GlobalInvocationID.x + 1] = L_lm[1];
+    out_sphericalHarmonicCoeffs[3 * gl_GlobalInvocationID.x + 2] = L_lm[2];
 }

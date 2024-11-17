@@ -36,6 +36,8 @@ private:
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
 private:
+  using SphericalHarmonicCoeffs = std::array<float, 27>;
+
   constexpr static glm::uvec2 CUBEMAP_RESOLUTION = {512U, 512U};
   constexpr static vk::Format TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
 
@@ -63,7 +65,11 @@ private:
   etna::ComputePipeline bakeDiffuseIrradiancePipeline;
 
   std::vector<etna::Image> cubemaps;
-  std::vector<etna::Buffer> cubemapDiffuseIrradianceCoeffs;
+  std::vector<etna::Buffer> diffuseIrradianceCoeffs;
+  std::vector<SphericalHarmonicCoeffs> cpuDiffuseIrradianceCoeffs;
+
   int32_t currentCubemapIdx = 0;
   int32_t newCubemapIdx = 0;
+
+  bool useSH = true;
 };

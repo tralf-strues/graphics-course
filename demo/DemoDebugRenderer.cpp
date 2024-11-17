@@ -86,7 +86,15 @@ void DemoDebugRenderer::loadScene(std::filesystem::path path)
 
   for (const auto& cubemapPath : CUBEMAP_FILEPATHS) {
     cubemaps.push_back(loadCubemap(cubemapPath));
-    cubemapDiffuseIrradianceCoeffs.push_back(bakeDiffuseIrradiance(cubemaps.back()));
+
+    auto coeffBuffer = bakeDiffuseIrradiance(cubemaps.back());
+
+    auto* src = coeffBuffer.map();
+    auto* dst = cpuDiffuseIrradianceCoeffs.emplace_back().data();
+    std::memcpy(dst, src, 27 * sizeof(float));
+    coeffBuffer.unmap();
+
+    diffuseIrradianceCoeffs.push_back(std::move(coeffBuffer));
   }
 }
 
@@ -258,26 +266,7 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
   auto cmdBuffer = oneShotCommands->start();
   ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
 
-  etna::set_state(
-    cmdBuffer,
-    environmentRect.get(),
-    vk::PipelineStageFlagBits2::eComputeShader,
-    vk::AccessFlagBits2::eShaderSampledRead,
-    vk::ImageLayout::eShaderReadOnlyOptimal,
-    vk::ImageAspectFlagBits::eColor);
-
-  etna::set_state(
-    cmdBuffer,
-    cubemap.get(),
-    vk::PipelineStageFlagBits2::eComputeShader,
-    vk::AccessFlagBits2::eShaderStorageWrite,
-    vk::ImageLayout::eGeneral,
-    vk::ImageAspectFlagBits::eColor);
-
-  etna::flush_barriers(cmdBuffer);
-
   auto programInfo = etna::get_shader_program("convert_cubemap");
-
   auto descriptorSet = etna::create_descriptor_set(
     programInfo.getDescriptorLayoutId(0),
     cmdBuffer,
@@ -325,6 +314,15 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
 
   // generate_mips(cmdBuffer, cubemap);
 
+  etna::set_state(
+    cmdBuffer,
+    cubemap.get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+  etna::flush_barriers(cmdBuffer);
+
   ETNA_CHECK_VK_RESULT(cmdBuffer.end());
   oneShotCommands->submitAndWait(std::move(cmdBuffer));
 
@@ -338,8 +336,8 @@ etna::Buffer DemoDebugRenderer::bakeDiffuseIrradiance(etna::Image& cubemap)
   auto coeffBuffer = ctx.createBuffer(etna::Buffer::CreateInfo{
     .size = 27 * sizeof(float),
     .bufferUsage =
-      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer,
-    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+      vk::BufferUsageFlagBits::eStorageBuffer,
+    .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
     .name = "cubemapDiffuseIrradianceCoeffs",
   });
 
@@ -453,7 +451,7 @@ void DemoDebugRenderer::renderScene(
   auto meshes = sceneMgr->getMeshes();
   auto relems = sceneMgr->getRenderElements();
 
-  // auto& cubemap = cubemaps[currentCubemapIdx];
+  auto& cubemap = cubemaps[currentCubemapIdx];
 
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
@@ -484,7 +482,10 @@ void DemoDebugRenderer::renderScene(
 
       if (material_pass)
       {
-        auto materialSet = etna::create_descriptor_set(
+        etna::DescriptorSet materialSet;
+
+        if (useSH) {
+          materialSet = etna::create_descriptor_set(
           info.getDescriptorLayoutId(1),
           cmd_buf,
           {
@@ -504,8 +505,48 @@ void DemoDebugRenderer::renderScene(
               3,
               mat.texEmissive->genBinding(
                 linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{4, cubemapDiffuseIrradianceCoeffs[currentCubemapIdx].genBinding()},
+            etna::Binding{4, diffuseIrradianceCoeffs[currentCubemapIdx].genBinding()},
           });
+        } else {
+          materialSet = etna::create_descriptor_set(
+            info.getDescriptorLayoutId(1),
+            cmd_buf,
+            {
+              etna::Binding{
+                0,
+                mat.texAlbedo->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                1,
+                mat.texMetalnessRoughness->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                2,
+                mat.texNorm->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                3,
+                mat.texEmissive->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                4,
+                cubemap.genBinding(
+                  linearSampler.get(),
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  etna::Image::ViewParams{
+                    0,
+                    vk::RemainingMipLevels,
+                    0,
+                    vk::RemainingArrayLayers,
+                    {},
+                    vk::ImageViewType::eCube,
+                  })},
+              etna::Binding{
+                5,
+                temporalDiffuseIrradiance[temporalCount % 2].genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+            });
+        }
 
         cmd_buf.bindDescriptorSets(
           vk::PipelineBindPoint::eGraphics,
@@ -566,7 +607,8 @@ void DemoDebugRenderer::renderWorld(
       vk::ImageAspectFlagBits::eColor);
     etna::flush_barriers(cmd_buf);
 
-    auto demoPassInfo = etna::get_shader_program("demo_diffuse_sh");
+    auto demoPassInfo = useSH ? etna::get_shader_program("demo_diffuse_sh")
+                              : etna::get_shader_program("demo_diffuse_indirect");
     auto cameraSet = etna::create_descriptor_set(
       demoPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
@@ -614,13 +656,24 @@ void DemoDebugRenderer::renderWorld(
 
       {.image = depth.get(), .view = depth.getView({})});
 
-    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, demoDiffuseSHPipeline.getVkPipeline());
-    cmd_buf.bindDescriptorSets(
-      vk::PipelineBindPoint::eGraphics,
-      demoDiffuseSHPipeline.getVkPipelineLayout(),
-      0,
-      {cameraSet.getVkSet()},
-      {});
+    if (useSH) {
+      cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, demoDiffuseSHPipeline.getVkPipeline());
+      cmd_buf.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        demoDiffuseSHPipeline.getVkPipelineLayout(),
+        0,
+        {cameraSet.getVkSet()},
+        {});
+    } else {
+      cmd_buf.bindPipeline(
+        vk::PipelineBindPoint::eGraphics, demoDiffuseIndirectPipeline.getVkPipeline());
+      cmd_buf.bindDescriptorSets(
+        vk::PipelineBindPoint::eGraphics,
+        demoDiffuseIndirectPipeline.getVkPipelineLayout(),
+        0,
+        {cameraSet.getVkSet()},
+        {});
+    }
 
     renderScene(cmd_buf, demoPassInfo, true);
 
@@ -657,6 +710,58 @@ void DemoDebugRenderer::drawGui()
   ImGui::NewLine();
 
   ImGui::Combo("Cubemap", &newCubemapIdx, CUBEMAP_NAMES.data(), static_cast<int32_t>(CUBEMAP_NAMES.size()));
+
+  ImGui::NewLine();
+
+  static bool tmpUseSH = useSH;
+  ImGui::Checkbox("Use Spherical Harmonics", &tmpUseSH);
+  if (tmpUseSH != useSH && !tmpUseSH) {
+    temporalCount = 0U;
+  }
+
+  useSH = tmpUseSH;
+
+  ImGui::NewLine();
+
+  constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
+    ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
+  if (ImGui::BeginTable("table1", 4, FLAGS))
+  {
+    ImGui::TableSetupColumn("L_l,m");
+    ImGui::TableSetupColumn("R");
+    ImGui::TableSetupColumn("G");
+    ImGui::TableSetupColumn("B");
+    ImGui::TableHeadersRow();
+
+    constexpr std::array ROW_NAMES = {
+      "L_0,0",
+      "L_1,1",
+      "L_1,0",
+      "L_1,-1",
+      "L_2,1",
+      "L_2,-1",
+      "L_2,_2",
+      "L_2,0",
+      "L_2,2",
+    };
+
+    for (size_t row = 0; row < ROW_NAMES.size(); ++row)
+    {
+      ImGui::TableNextRow();
+
+      ImGui::TableSetColumnIndex(0);
+      ImGui::Text("%s", ROW_NAMES[row]);
+
+      const auto* coeffs = &cpuDiffuseIrradianceCoeffs[currentCubemapIdx][3U * row];
+
+      for (size_t column = 0; column < 3; ++column)
+      {
+        ImGui::TableSetColumnIndex(column + 1);
+        ImGui::Text("%f", coeffs[column]);
+      }
+    }
+    ImGui::EndTable();
+  }
 
   ImGui::NewLine();
 

@@ -85,8 +85,8 @@ void main()
   vec3 L22   = vec3(sphericalHarmonicCoeffs[24], sphericalHarmonicCoeffs[24 + 1], sphericalHarmonicCoeffs[24 + 2]);
 
   vec3 E = A0*Y00*L00
-             + A1*Y1_1*L1_1 + A1*Y10*L10 + A1*Y11*L11 
-             + A2*Y2_2*L2_2 + A2*Y2_1*L2_1 + A2*Y20*L20 + A2*Y21*L21 + A2*Y22*L22;
+         + A1*Y1_1*L1_1 + A1*Y10*L10 + A1*Y11*L11
+         + A2*Y2_2*L2_2 + A2*Y2_1*L2_1 + A2*Y20*L20 + A2*Y21*L21 + A2*Y22*L22;
 
   vec3 L0 = E * LambertianDiffuseBRDF(point);
 
