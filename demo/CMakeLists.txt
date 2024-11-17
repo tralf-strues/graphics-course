@@ -12,11 +12,13 @@ target_link_libraries(demo
   PRIVATE glfw etna glm::glm wsi gui scene render_utils)
 
 target_add_shaders(demo
+  shaders/bake_diffuse_irradiance.comp
   shaders/convert_cubemap.comp
   shaders/cubemap.frag
   shaders/cubemap.vert
   shaders/deferred_pass.comp
   shaders/demo_diffuse_indirect.frag
+  shaders/demo_diffuse_sh.frag
   shaders/geometry_pass.vert
   shaders/geometry_pass.frag
 )

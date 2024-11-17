@@ -85,7 +85,8 @@ void DemoDebugRenderer::loadScene(std::filesystem::path path)
   sceneMgr->selectScene(path);
 
   for (const auto& cubemapPath : CUBEMAP_FILEPATHS) {
-    cubemaps.push_back(std::move(loadCubemap(cubemapPath)));
+    cubemaps.push_back(loadCubemap(cubemapPath));
+    cubemapDiffuseIrradianceCoeffs.push_back(bakeDiffuseIrradiance(cubemaps.back()));
   }
 }
 
@@ -100,6 +101,14 @@ void DemoDebugRenderer::loadShaders()
     "render_cubemap", {DEMO_SHADERS_ROOT "cubemap.vert.spv", DEMO_SHADERS_ROOT "cubemap.frag.spv"});
 
   etna::create_program("convert_cubemap", {DEMO_SHADERS_ROOT "convert_cubemap.comp.spv"});
+
+  etna::create_program(
+    "bake_diffuse_irradiance", {DEMO_SHADERS_ROOT "bake_diffuse_irradiance.comp.spv"});
+
+  etna::create_program(
+    "demo_diffuse_sh",
+    {DEMO_SHADERS_ROOT "geometry_pass.vert.spv",
+     DEMO_SHADERS_ROOT "demo_diffuse_sh.frag.spv"});
 }
 
 void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
@@ -172,6 +181,31 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
 
   convertCubemapPipeline = {};
   convertCubemapPipeline = pipelineManager.createComputePipeline("convert_cubemap", {});
+
+  bakeDiffuseIrradiancePipeline = {};
+  bakeDiffuseIrradiancePipeline =
+    pipelineManager.createComputePipeline("bake_diffuse_irradiance", {});
+
+  demoDiffuseSHPipeline = {};
+  demoDiffuseSHPipeline = pipelineManager.createGraphicsPipeline(
+    "demo_diffuse_sh",
+    etna::GraphicsPipeline::CreateInfo{
+      .vertexShaderInput = sceneVertexInputDesc,
+      .rasterizationConfig =
+        vk::PipelineRasterizationStateCreateInfo{
+          .polygonMode = vk::PolygonMode::eFill,
+          .cullMode = vk::CullModeFlagBits::eBack,
+          .frontFace = vk::FrontFace::eCounterClockwise,
+          .lineWidth = 1.f,
+        },
+      .blendingConfig =
+        {.attachments = {BLEND_STATE, BLEND_STATE}, .logicOpEnable = false, .logicOp = vk::LogicOp::eAnd},
+      .fragmentShaderOutput =
+        {
+          .colorAttachmentFormats = {swapchain_format, TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT},
+          .depthAttachmentFormat = vk::Format::eD32Sfloat,
+        },
+    });
 }
 
 etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
@@ -297,6 +331,61 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
   return cubemap;
 }
 
+etna::Buffer DemoDebugRenderer::bakeDiffuseIrradiance(etna::Image& cubemap)
+{
+  auto& ctx = etna::get_context();
+
+  auto coeffBuffer = ctx.createBuffer(etna::Buffer::CreateInfo{
+    .size = 27 * sizeof(float),
+    .bufferUsage =
+      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .name = "cubemapDiffuseIrradianceCoeffs",
+  });
+
+  auto cmdBuffer = oneShotCommands->start();
+  ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
+
+  auto programInfo = etna::get_shader_program("bake_diffuse_irradiance");
+  auto descriptorSet = etna::create_descriptor_set(
+    programInfo.getDescriptorLayoutId(0),
+    cmdBuffer,
+    {
+      etna::Binding(
+        0,
+        cubemap.genBinding(
+          pointSampler.get(),
+          vk::ImageLayout::eShaderReadOnlyOptimal,
+          etna::Image::ViewParams{
+            0,
+            1,
+            0,
+            6,
+            {},
+            vk::ImageViewType::eCube,
+          })),
+
+      etna::Binding(1, coeffBuffer.genBinding()),
+    });
+  etna::flush_barriers(cmdBuffer);
+
+  cmdBuffer.bindPipeline(
+    vk::PipelineBindPoint::eCompute, bakeDiffuseIrradiancePipeline.getVkPipeline());
+  cmdBuffer.bindDescriptorSets(
+    vk::PipelineBindPoint::eCompute,
+    bakeDiffuseIrradiancePipeline.getVkPipelineLayout(),
+    0,
+    {descriptorSet.getVkSet()},
+    {});
+
+  cmdBuffer.dispatch(1, 1, 1);
+
+  ETNA_CHECK_VK_RESULT(cmdBuffer.end());
+  oneShotCommands->submitAndWait(std::move(cmdBuffer));
+
+  return coeffBuffer;
+}
+
 void DemoDebugRenderer::debugInput(const Keyboard& kb)
 {
   if (kb[KeyboardKey::kQ] == ButtonState::Falling)
@@ -364,7 +453,7 @@ void DemoDebugRenderer::renderScene(
   auto meshes = sceneMgr->getMeshes();
   auto relems = sceneMgr->getRenderElements();
 
-  auto& cubemap = cubemaps[currentCubemapIdx];
+  // auto& cubemap = cubemaps[currentCubemapIdx];
 
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
@@ -415,23 +504,7 @@ void DemoDebugRenderer::renderScene(
               3,
               mat.texEmissive->genBinding(
                 linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{
-              4,
-              cubemap.genBinding(
-                linearSampler.get(),
-                vk::ImageLayout::eShaderReadOnlyOptimal,
-                etna::Image::ViewParams{
-                  0,
-                  vk::RemainingMipLevels,
-                  0,
-                  vk::RemainingArrayLayers,
-                  {},
-                  vk::ImageViewType::eCube,
-                })},
-            etna::Binding{
-              5,
-              temporalDiffuseIrradiance[temporalCount % 2].genBinding(
-                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+            etna::Binding{4, cubemapDiffuseIrradianceCoeffs[currentCubemapIdx].genBinding()},
           });
 
         cmd_buf.bindDescriptorSets(
@@ -493,7 +566,7 @@ void DemoDebugRenderer::renderWorld(
       vk::ImageAspectFlagBits::eColor);
     etna::flush_barriers(cmd_buf);
 
-    auto demoPassInfo = etna::get_shader_program("demo_diffuse_indirect");
+    auto demoPassInfo = etna::get_shader_program("demo_diffuse_sh");
     auto cameraSet = etna::create_descriptor_set(
       demoPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
@@ -541,10 +614,10 @@ void DemoDebugRenderer::renderWorld(
 
       {.image = depth.get(), .view = depth.getView({})});
 
-    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, demoDiffuseIndirectPipeline.getVkPipeline());
+    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, demoDiffuseSHPipeline.getVkPipeline());
     cmd_buf.bindDescriptorSets(
       vk::PipelineBindPoint::eGraphics,
-      demoDiffuseIndirectPipeline.getVkPipelineLayout(),
+      demoDiffuseSHPipeline.getVkPipelineLayout(),
       0,
       {cameraSet.getVkSet()},
       {});

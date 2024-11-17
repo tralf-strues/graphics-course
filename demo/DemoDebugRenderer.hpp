@@ -31,6 +31,7 @@ public:
 
 private:
   etna::Image loadCubemap(std::filesystem::path path);
+  etna::Buffer bakeDiffuseIrradiance(etna::Image& cubemap);
 
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
@@ -46,6 +47,7 @@ private:
   glm::uvec2 resolution;
 
   etna::GraphicsPipeline demoDiffuseIndirectPipeline;
+  etna::GraphicsPipeline demoDiffuseSHPipeline;
   etna::GraphicsPipeline renderCubemapPipeline;
 
   std::array<etna::Image, 2> temporalDiffuseIrradiance;
@@ -58,7 +60,10 @@ private:
   std::unique_ptr<etna::OneShotCmdMgr> oneShotCommands;
   etna::BlockingTransferHelper transferHelper;
 
+  etna::ComputePipeline bakeDiffuseIrradiancePipeline;
+
   std::vector<etna::Image> cubemaps;
+  std::vector<etna::Buffer> cubemapDiffuseIrradianceCoeffs;
   int32_t currentCubemapIdx = 0;
   int32_t newCubemapIdx = 0;
 };
