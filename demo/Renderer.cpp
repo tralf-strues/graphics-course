@@ -25,13 +25,17 @@ void Renderer::initVulkan(std::span<const char*> instance_extensions)
   std::vector<const char*> deviceExtensions;
 
   deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+  deviceExtensions.push_back(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME);
+
+  vk::PhysicalDeviceVulkan12Features device12Features;
+  device12Features.scalarBlockLayout = vk::True;
 
   etna::initialize(etna::InitParams{
     .applicationName = "Demo",
     .applicationVersion = VK_MAKE_VERSION(0, 1, 0),
     .instanceExtensions = instanceExtensions,
     .deviceExtensions = deviceExtensions,
-    .features = vk::PhysicalDeviceFeatures2{.features = {}},
+    .features = vk::PhysicalDeviceFeatures2{.pNext = &device12Features, .features = {}},
     // Replace with an index if etna detects your preferred GPU incorrectly
     .physicalDeviceIndexOverride = {},
     // How much frames we buffer on the GPU without waiting for their completion on the CPU

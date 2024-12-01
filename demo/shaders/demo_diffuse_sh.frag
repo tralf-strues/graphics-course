@@ -1,6 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "CameraData.h"
 #include "NormalPerturbation.glsl"
@@ -24,8 +25,16 @@ layout(set = 1, binding = 1) uniform sampler2D texMetalnessRoughness;
 layout(set = 1, binding = 2) uniform sampler2D texNorm;
 layout(set = 1, binding = 3) uniform sampler2D texEmissive;
 
-layout(set = 1, binding = 4, std430) readonly buffer Coeffs {
-    float sphericalHarmonicCoeffs[27];
+layout(set = 1, binding = 4, scalar) readonly buffer Coeffs {
+  vec3 L00;
+  vec3 L11;
+  vec3 L10;
+  vec3 L1_1;
+  vec3 L21;
+  vec3 L2_1;
+  vec3 L2_2;
+  vec3 L20;
+  vec3 L22;
 };
 
 layout(push_constant) uniform params_t
@@ -68,16 +77,6 @@ void main()
   float Y2_2 = 1.092548 * point.normal.y * point.normal.x;
   float Y20  = 0.946176 * point.normal.z * point.normal.z - 0.315392;
   float Y22  = 0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y);
-
-  vec3 L00   = vec3(sphericalHarmonicCoeffs[0 ], sphericalHarmonicCoeffs[0  + 1], sphericalHarmonicCoeffs[0  + 2]);
-  vec3 L11   = vec3(sphericalHarmonicCoeffs[3 ], sphericalHarmonicCoeffs[3  + 1], sphericalHarmonicCoeffs[3  + 2]);
-  vec3 L10   = vec3(sphericalHarmonicCoeffs[6 ], sphericalHarmonicCoeffs[6  + 1], sphericalHarmonicCoeffs[6  + 2]);
-  vec3 L1_1  = vec3(sphericalHarmonicCoeffs[9 ], sphericalHarmonicCoeffs[9  + 1], sphericalHarmonicCoeffs[9  + 2]);
-  vec3 L21   = vec3(sphericalHarmonicCoeffs[12], sphericalHarmonicCoeffs[12 + 1], sphericalHarmonicCoeffs[12 + 2]);
-  vec3 L2_1  = vec3(sphericalHarmonicCoeffs[15], sphericalHarmonicCoeffs[15 + 1], sphericalHarmonicCoeffs[15 + 2]);
-  vec3 L2_2  = vec3(sphericalHarmonicCoeffs[18], sphericalHarmonicCoeffs[18 + 1], sphericalHarmonicCoeffs[18 + 2]);
-  vec3 L20   = vec3(sphericalHarmonicCoeffs[21], sphericalHarmonicCoeffs[21 + 1], sphericalHarmonicCoeffs[21 + 2]);
-  vec3 L22   = vec3(sphericalHarmonicCoeffs[24], sphericalHarmonicCoeffs[24 + 1], sphericalHarmonicCoeffs[24 + 2]);
 
   vec3 E = A0*Y00*L00
          + A1*Y1_1*L1_1 + A1*Y10*L10 + A1*Y11*L11
