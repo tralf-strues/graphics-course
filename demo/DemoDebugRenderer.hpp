@@ -32,13 +32,30 @@ public:
 private:
   etna::Image loadCubemap(std::filesystem::path path);
   etna::Buffer bakeDiffuseIrradiance(etna::Image& cubemap);
+  etna::Image prefilterEnvMap(etna::Image& cubemap);
+
+  etna::Image computeEnvBRDF();
 
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
 private:
   using SphericalHarmonicCoeffs = std::array<float, 27>;
 
-  constexpr static glm::uvec2 CUBEMAP_RESOLUTION = {512U, 512U};
+  struct Environment {
+    etna::Image cubemap;
+    etna::Image prefilteredEnvMap;
+    etna::Buffer diffuseIrradianceCoeffs;
+    SphericalHarmonicCoeffs shCoeffs;
+  };
+
+  enum Method : int32_t {
+    eDiffuseSH,
+    eDiffuseNoPrecompute,
+    eSpecularIBL
+  };
+
+  constexpr static glm::uvec2 CUBEMAP_RESOLUTION = {512, 512};
+  constexpr static int32_t PREFILTERED_ENV_MAP_MIPS = 6;
   constexpr static vk::Format TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT = vk::Format::eR32G32B32A32Sfloat;
 
   std::unique_ptr<SceneManager> sceneMgr;
@@ -50,6 +67,7 @@ private:
 
   etna::GraphicsPipeline demoDiffuseIndirectPipeline;
   etna::GraphicsPipeline demoDiffuseSHPipeline;
+  etna::GraphicsPipeline demoSpecularIBLPipeline;
   etna::GraphicsPipeline renderCubemapPipeline;
 
   std::array<etna::Image, 2> temporalDiffuseIrradiance;
@@ -63,13 +81,19 @@ private:
   etna::BlockingTransferHelper transferHelper;
 
   etna::ComputePipeline bakeDiffuseIrradiancePipeline;
+  etna::ComputePipeline prefilterEnvMapPipeline;
+  etna::ComputePipeline computeEnvBRDFPipeline;
 
-  std::vector<etna::Image> cubemaps;
-  std::vector<etna::Buffer> diffuseIrradianceCoeffs;
-  std::vector<SphericalHarmonicCoeffs> cpuDiffuseIrradianceCoeffs;
+  std::vector<Environment> environments;
+  etna::Image envBRDF;
 
-  int32_t currentCubemapIdx = 0;
-  int32_t newCubemapIdx = 0;
+  int32_t currentEnvironmentIdx = 0;
+  int32_t newEnvironmentIdx = 0;
 
-  bool useSH = true;
+  int32_t currentCubemapMip = 0;
+
+  Method currentMethod = eDiffuseSH;
+
+  float metalness = 0.0f;
+  float roughness = 0.0f;
 };

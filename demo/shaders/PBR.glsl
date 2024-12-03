@@ -1,10 +1,7 @@
 #ifndef PBR_GLSL_INCLUDED
 #define PBR_GLSL_INCLUDED
 
-const float PI      = 3.14159265359f;
-const float TWO_PI  = 2.0f * PI;
-const float HALF_PI = 0.5f * PI;
-const float INV_PI  = 1.0f / PI;
+#include "Common.glsl"
 
 struct SurfacePoint
 {
@@ -66,7 +63,7 @@ vec3 SpecularBRDF(SurfacePoint point, LightSample light, vec3 fresnel)
   // Geometry Shadowing Function
   // aka coefficient on the amount of light, which is self-shadowed or obstructed
   float k                   = (point.roughness + 1.0f) *
-                               (point.roughness + 1.0f) / 8.0f;  // Roughness remapping
+                              (point.roughness + 1.0f) / 8.0f;  // Roughness remapping
   float GSF                 = GSF_SmithSchlickGGX(point.normal, point.toCam, light.toLight, k);
 
   // Specular part
@@ -112,6 +109,20 @@ float GSF_SmithSchlickGGX(vec3 n, vec3 v, vec3 l, float k)
   float obstruction = GSF_SchlickGGX(n, v, k);
 
   return shadowing * obstruction;
+}
+
+vec3 ImportanceSampleGGX(vec2 uniformSample, float roughness, mat3 tbn) {
+  float a = roughness * roughness;
+  float a2 = a * a;
+
+  float phiH = TWO_PI * uniformSample.y;
+
+  float cosThetaH = sqrt((1.0f - uniformSample.x) / (1.0f + (a2 - 1.0f) * uniformSample.x));
+  float sinThetaH = sqrt(1.0f - cosThetaH * cosThetaH);
+
+  vec3 h = vec3(cos(phiH) * sinThetaH, sin(phiH) * sinThetaH, cosThetaH);
+
+  return tbn * h;
 }
 
 #endif // PBR_GLSL_INCLUDED

@@ -1,6 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "CameraData.h"
 #include "NormalPerturbation.glsl"
@@ -20,8 +21,8 @@ layout(set = 1, binding = 1) uniform sampler2D texMetalnessRoughness;
 layout(set = 1, binding = 2) uniform sampler2D texNorm;
 layout(set = 1, binding = 3) uniform sampler2D texEmissive;
 
-layout(set = 1, binding = 4) uniform samplerCube cubemap;
-layout(set = 1, binding = 5) uniform sampler2D temporalDiffuseIrradiance;
+layout(set = 1, binding = 4) uniform samplerCube texPrefilteredEnvMap;
+layout(set = 1, binding = 5) uniform sampler2D texEnvBRDF;
 
 layout(push_constant) uniform params_t
 {
@@ -30,6 +31,7 @@ layout(push_constant) uniform params_t
   uint temporalCount;
   float metalness;
   float roughness;
+  uint envMapMips;
 } params;
 //==================================================================================================
 
@@ -47,39 +49,41 @@ layout(location = 0) out vec4 out_color;
 layout(location = 1) out vec4 out_temporalDiffuseIrradiance;
 //==================================================================================================
 
+vec3 SpecularIBL(SurfacePoint point) {
+  float NoV = clamp(dot(point.normal, point.toCam), 0.5f / 512.0f, 1.0f);
+  vec3 R = reflect(-point.toCam, point.normal);
+
+  // Some remapping found in moving frostbite to PBR,
+  // yet to be understood :)
+  float smoothness = clamp(1.0f - point.roughness, 0.0f, 1.0f);
+  float lerpFactor = smoothness * (sqrt(smoothness) + point.roughness);
+  R = mix(point.normal, R, lerpFactor);
+
+  float mip = point.roughness * float(params.envMapMips - 1);
+  vec3 prefilteredColor = textureLod(texPrefilteredEnvMap, R, mip).rgb;
+
+  vec2 envBrdf = texture(texEnvBRDF, vec2(NoV, point.roughness)).rg;
+
+  vec3 F = FresnelSchlick(point.normal, point.toCam, point.f0);
+
+  // return vec3(envBrdf.r, envBrdf.g, 0.0f);
+  return prefilteredColor * (F * envBrdf.r + envBrdf.g);
+}
+
 void main()
 {
   SurfacePoint point;
   point.normal    = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);
   point.position  = vertex.wsPos;
-  // point.toCam     = normalize(camera.wsPos - point.position);
+  point.toCam     = normalize(camera.wsPos - point.position);
   point.albedo    = texture(texAlbedo, vertex.texCoord).rgb;
-  // point.metalness = texture(texMetalnessRoughness, vertex.texCoord).b;
-  // point.roughness = texture(texMetalnessRoughness, vertex.texCoord).g;
-  // point.f0        = vec3(0.04f);
-  // point.f0        = mix(point.f0, point.albedo, point.metalness);
 
-  uint seed = (uint(gl_FragCoord.x) * uint(1973) + uint(gl_FragCoord.y) * uint(9277) +
-    uint(params.temporalCount) * uint(26699)) | uint(1);
+  point.metalness = params.metalness;
+  point.roughness = texture(texMetalnessRoughness, vertex.texCoord).g * params.roughness;
 
-  vec2 resolution     = vec2(textureSize(temporalDiffuseIrradiance, 0).xy);
-  vec2 fragUV         = gl_FragCoord.xy / resolution;
-  vec3 prevIrradiance = texture(temporalDiffuseIrradiance, fragUV).rgb;
+  point.f0        = vec3(0.04f);
+  point.f0        = mix(point.f0, point.albedo, point.metalness);
 
-  const uint SAMPLES = 16;
-
-  vec3 newIrradiance = vec3(0.0f);
-  for (uint i = 0; i < SAMPLES; ++i)
-  {
-    vec3 dir = normalize(point.normal + RandomUnitVector(seed));
-    newIrradiance += textureLod(cubemap, dir, 0.0f).rgb * max(dot(point.normal, dir), 0.0f);
-  }
-
-  newIrradiance = (prevIrradiance * float(params.temporalCount) + newIrradiance) / float(params.temporalCount + 1);
-  out_temporalDiffuseIrradiance = vec4(newIrradiance, 1.0f);
-
-  vec3 L0 = newIrradiance / float(SAMPLES);
-  L0 *= LambertianDiffuseBRDF(point);
-
-  out_color = vec4(L0, 1.0f);
+  vec3 L0         = SpecularIBL(point);
+  out_color       = vec4(L0, 1.0f);
 }

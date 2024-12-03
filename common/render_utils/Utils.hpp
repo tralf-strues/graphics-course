@@ -6,4 +6,4 @@
 #include <etna/Sampler.hpp>
 
 
-void generate_mips(vk::CommandBuffer& cmds, etna::Image& img);
+void generate_mips(vk::CommandBuffer& cmds, etna::Image& img, uint32_t layers = 1);

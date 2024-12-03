@@ -42,6 +42,9 @@ layout(push_constant) uniform params_t
   mat4 model;
   mat3 normalMatrix;
   uint temporalCount;
+  float metalness;
+  float roughness;
+  uint envMapMips;
 } params;
 //==================================================================================================
 
@@ -61,8 +64,6 @@ layout(location = 1) out vec4 out_temporalDiffuseIrradiance;
 
 void main()
 {
-  vec3 emissive = texture(texEmissive, vertex.texCoord).rgb;
-
   SurfacePoint point;
   point.normal    = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);
   point.position  = vertex.wsPos;

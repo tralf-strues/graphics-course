@@ -3,10 +3,7 @@
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : enable
 
-const float PI         = 3.14159265359f;
-const float TWO_PI     = 2.0f * PI;
-const float INV_PI     = 1.0f / PI;
-const float INV_TWO_PI = 1.0f / TWO_PI;
+#include "Common.glsl"
 
 layout(set = 0, binding = 0) uniform samplerCube environmentCubemap;
 

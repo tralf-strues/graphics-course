@@ -1,6 +1,6 @@
 #include "Utils.hpp"
 
-void generate_mips(vk::CommandBuffer& cmds, etna::Image& img)
+void generate_mips(vk::CommandBuffer& cmds, etna::Image& img, uint32_t layers)
 {
   auto extent = img.getExtent();
   auto mips =
@@ -34,7 +34,7 @@ void generate_mips(vk::CommandBuffer& cmds, etna::Image& img)
     /*baseMip=*/1,
     /*levelCount=*/mips - 1,
     0,
-    vk::RemainingArrayLayers,
+    layers,
   });
 
   cmds.pipelineBarrier(
@@ -64,8 +64,8 @@ void generate_mips(vk::CommandBuffer& cmds, etna::Image& img)
       1,
     };
 
-    blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, mip - 1, 0, vk::RemainingArrayLayers});
-    blit.setDstSubresource({vk::ImageAspectFlagBits::eColor, mip, 0, vk::RemainingArrayLayers});
+    blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, mip - 1, 0, layers});
+    blit.setDstSubresource({vk::ImageAspectFlagBits::eColor, mip, 0, layers});
 
     cmds.blitImage(
       img.get(),
@@ -85,7 +85,7 @@ void generate_mips(vk::CommandBuffer& cmds, etna::Image& img)
       /*baseMip=*/mip,
       /*levelCount=*/1,
       0,
-      vk::RemainingArrayLayers,
+      layers,
     });
 
     cmds.pipelineBarrier(

@@ -17,6 +17,12 @@ constexpr std::array CUBEMAP_NAMES = {
   "Small Cathedral",
 };
 
+constexpr std::array METHOD_NAMES = {
+  "Diffuse Spherical Harmonics",
+  "Diffuse No Precomputation",
+  "Specular IBL",
+};
+
 constexpr std::array CUBEMAP_FILEPATHS = {
   GRAPHICS_COURSE_RESOURCES_ROOT "/textures/fireplace_1k.hdr",
   GRAPHICS_COURSE_RESOURCES_ROOT "/textures/circus_arena_2k.hdr",
@@ -85,17 +91,22 @@ void DemoDebugRenderer::loadScene(std::filesystem::path path)
   sceneMgr->selectScene(path);
 
   for (const auto& cubemapPath : CUBEMAP_FILEPATHS) {
-    cubemaps.push_back(loadCubemap(cubemapPath));
+    Environment environment;
+    environment.cubemap = loadCubemap(cubemapPath);
 
-    auto coeffBuffer = bakeDiffuseIrradiance(cubemaps.back());
+    environment.diffuseIrradianceCoeffs = bakeDiffuseIrradiance(environment.cubemap);
 
-    auto* src = coeffBuffer.map();
-    auto* dst = cpuDiffuseIrradianceCoeffs.emplace_back().data();
+    auto* src = environment.diffuseIrradianceCoeffs.map();
+    auto* dst = environment.shCoeffs.data();
     std::memcpy(dst, src, 27 * sizeof(float));
-    coeffBuffer.unmap();
+    environment.diffuseIrradianceCoeffs.unmap();
 
-    diffuseIrradianceCoeffs.push_back(std::move(coeffBuffer));
+    environment.prefilteredEnvMap = prefilterEnvMap(environment.cubemap);
+
+    environments.push_back(std::move(environment));
   }
+
+  envBRDF = computeEnvBRDF();
 }
 
 void DemoDebugRenderer::loadShaders()
@@ -117,6 +128,13 @@ void DemoDebugRenderer::loadShaders()
     "demo_diffuse_sh",
     {DEMO_SHADERS_ROOT "geometry_pass.vert.spv",
      DEMO_SHADERS_ROOT "demo_diffuse_sh.frag.spv"});
+
+  etna::create_program("prefilter_envmap", {DEMO_SHADERS_ROOT "prefilter_envmap.comp.spv"});
+  etna::create_program("compute_env_brdf", {DEMO_SHADERS_ROOT "compute_env_brdf.comp.spv"});
+
+  etna::create_program(
+    "demo_specular_ibl",
+    {DEMO_SHADERS_ROOT "geometry_pass.vert.spv", DEMO_SHADERS_ROOT "demo_specular_ibl.frag.spv"});
 }
 
 void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
@@ -214,6 +232,37 @@ void DemoDebugRenderer::setupPipelines(vk::Format swapchain_format)
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
     });
+
+  prefilterEnvMapPipeline = {};
+  prefilterEnvMapPipeline = pipelineManager.createComputePipeline("prefilter_envmap", {});
+
+  computeEnvBRDFPipeline = {};
+  computeEnvBRDFPipeline = pipelineManager.createComputePipeline("compute_env_brdf", {});
+
+  demoSpecularIBLPipeline = {};
+  demoSpecularIBLPipeline = pipelineManager.createGraphicsPipeline(
+    "demo_specular_ibl",
+    etna::GraphicsPipeline::CreateInfo{
+      .vertexShaderInput = sceneVertexInputDesc,
+      .rasterizationConfig =
+        {
+          .polygonMode = vk::PolygonMode::eFill,
+          .cullMode = vk::CullModeFlagBits::eBack,
+          .frontFace = vk::FrontFace::eCounterClockwise,
+          .lineWidth = 1.f,
+        },
+      .blendingConfig =
+        {
+          .attachments = {BLEND_STATE, BLEND_STATE},
+          .logicOpEnable = false,
+          .logicOp = vk::LogicOp::eAnd,
+        },
+      .fragmentShaderOutput =
+        {
+          .colorAttachmentFormats = {swapchain_format, TEMPORAL_DIFFUSE_IRRADIANCE_FORMAT},
+          .depthAttachmentFormat = vk::Format::eD32Sfloat,
+        },
+    });
 }
 
 etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
@@ -236,9 +285,7 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
     .samples = vk::SampleCountFlagBits::e1,
   });
 
-  // auto mips =
-  //   static_cast<uint32_t>(std::floor(std::log2(std::max(CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y)))) + 1;
-  uint32_t mips = 1;
+  auto mips = static_cast<uint32_t>(std::floor(std::log2(std::max(CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y)))) + 1;
 
   auto cubemap = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y, 1},
@@ -312,7 +359,7 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
 
   cmdBuffer.dispatch((CUBEMAP_RESOLUTION.x + 15) / 16, (CUBEMAP_RESOLUTION.y + 15) / 16, 6);
 
-  // generate_mips(cmdBuffer, cubemap);
+  generate_mips(cmdBuffer, cubemap, 6);
 
   etna::set_state(
     cmdBuffer,
@@ -384,6 +431,213 @@ etna::Buffer DemoDebugRenderer::bakeDiffuseIrradiance(etna::Image& cubemap)
   return coeffBuffer;
 }
 
+etna::Image DemoDebugRenderer::prefilterEnvMap(etna::Image& cubemap)
+{
+  auto& ctx = etna::get_context();
+
+  auto prefilteredEnvMap = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y, 1},
+    .name = "prefilteredEnvMap",
+    .format = vk::Format::eR32G32B32A32Sfloat,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
+      vk::ImageUsageFlagBits::eTransferDst,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .tiling = vk::ImageTiling::eOptimal,
+    .layers = 6U,
+    .mipLevels = PREFILTERED_ENV_MAP_MIPS,
+    .samples = vk::SampleCountFlagBits::e1,
+    .type = vk::ImageType::e2D,
+    .flags = vk::ImageCreateFlagBits::eCubeCompatible,
+  });
+
+  auto cmdBuffer = oneShotCommands->start();
+  ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
+
+  auto programInfo = etna::get_shader_program("prefilter_envmap");
+  cmdBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, prefilterEnvMapPipeline.getVkPipeline());
+
+  etna::set_state(
+    cmdBuffer,
+    cubemap.get(),
+    vk::PipelineStageFlagBits2::eTransfer,
+    vk::AccessFlagBits2::eTransferRead,
+    vk::ImageLayout::eTransferSrcOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+    cmdBuffer,
+    prefilteredEnvMap.get(),
+    vk::PipelineStageFlagBits2::eTransfer,
+    vk::AccessFlagBits2::eTransferWrite,
+    vk::ImageLayout::eTransferDstOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::flush_barriers(cmdBuffer);
+
+  /* Simply blit mip 0 */
+  vk::ImageBlit blit;
+  blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
+  blit.srcOffsets[1] = vk::Offset3D{CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y, 1};
+  blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
+  blit.dstOffsets[1] = vk::Offset3D{CUBEMAP_RESOLUTION.x, CUBEMAP_RESOLUTION.y, 1};
+  blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 6});
+  blit.setDstSubresource({vk::ImageAspectFlagBits::eColor, 0, 0, 6});
+
+  cmdBuffer.blitImage(
+    cubemap.get(),
+    vk::ImageLayout::eTransferSrcOptimal,
+    prefilteredEnvMap.get(),
+    vk::ImageLayout::eTransferDstOptimal,
+    blit,
+    vk::Filter::eLinear);
+
+  etna::set_state(
+    cmdBuffer,
+    cubemap.get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+    cmdBuffer,
+    prefilteredEnvMap.get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderStorageWrite,
+    vk::ImageLayout::eGeneral,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::flush_barriers(cmdBuffer);
+
+  /* Calculate others */
+  for (int32_t mip = 1; mip < PREFILTERED_ENV_MAP_MIPS; ++mip) {
+    auto descriptorSet = etna::create_descriptor_set(
+      programInfo.getDescriptorLayoutId(0),
+      cmdBuffer,
+      {
+        etna::Binding(
+          0,
+          cubemap.genBinding(
+            linearSampler.get(),
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            etna::Image::ViewParams{
+              0,
+              vk::RemainingMipLevels,
+              0,
+              vk::RemainingArrayLayers,
+              {},
+              vk::ImageViewType::eCube,
+            })),
+
+        etna::Binding(
+          1,
+          prefilteredEnvMap.genBinding(
+            linearSampler.get(),
+            vk::ImageLayout::eGeneral,
+            etna::Image::ViewParams{
+              static_cast<uint32_t>(mip),
+              1,
+              0,
+              vk::RemainingArrayLayers,
+              {},
+              vk::ImageViewType::eCube,
+            })),
+      });
+
+    cmdBuffer.bindDescriptorSets(
+      vk::PipelineBindPoint::eCompute,
+      prefilterEnvMapPipeline.getVkPipelineLayout(),
+      0,
+      {descriptorSet.getVkSet()},
+      {});
+
+    glm::uvec2 res = {CUBEMAP_RESOLUTION.x >> mip, CUBEMAP_RESOLUTION.y >> mip};
+
+    struct PushConstant
+    {
+      glm::uvec2 resolution;
+      glm::vec2 invResolution;
+      int32_t mip;
+      float roughness;
+    } pushConst{
+      .resolution = res,
+      .invResolution = 1.0f / glm::vec2(res),
+      .mip = mip,
+      .roughness = static_cast<float>(mip) / (PREFILTERED_ENV_MAP_MIPS - 1.0f),
+    };
+
+    cmdBuffer.pushConstants<PushConstant>(
+      programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {pushConst});
+
+    cmdBuffer.dispatch((res.x + 15) / 16, (res.y + 15) / 16, 6);
+  }
+
+  etna::set_state(
+    cmdBuffer,
+    prefilteredEnvMap.get(),
+    vk::PipelineStageFlagBits2::eFragmentShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::flush_barriers(cmdBuffer);
+
+  ETNA_CHECK_VK_RESULT(cmdBuffer.end());
+  oneShotCommands->submitAndWait(std::move(cmdBuffer));
+
+  return prefilteredEnvMap;
+}
+
+etna::Image DemoDebugRenderer::computeEnvBRDF()
+{
+  auto& ctx = etna::get_context();
+
+  auto img = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{512, 512, 1},
+    .name = "envBRDF",
+    .format = vk::Format::eR16G16Sfloat,
+    .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+  });
+
+  auto cmdBuffer = oneShotCommands->start();
+  ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
+
+  auto programInfo = etna::get_shader_program("compute_env_brdf");
+  auto descriptorSet = etna::create_descriptor_set(
+    programInfo.getDescriptorLayoutId(0),
+    cmdBuffer,
+    {
+      etna::Binding(
+        0,
+        img.genBinding(pointSampler.get(), vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
+    });
+  etna::flush_barriers(cmdBuffer);
+
+  cmdBuffer.bindPipeline(vk::PipelineBindPoint::eCompute, computeEnvBRDFPipeline.getVkPipeline());
+  cmdBuffer.bindDescriptorSets(
+    vk::PipelineBindPoint::eCompute,
+    computeEnvBRDFPipeline.getVkPipelineLayout(),
+    0,
+    {descriptorSet.getVkSet()},
+    {});
+
+  cmdBuffer.dispatch(512 / 32, 512 / 32, 1);
+
+  etna::set_state(
+    cmdBuffer,
+    img.get(),
+    vk::PipelineStageFlagBits2::eFragmentShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+  etna::flush_barriers(cmdBuffer);
+
+  ETNA_CHECK_VK_RESULT(cmdBuffer.end());
+  oneShotCommands->submitAndWait(std::move(cmdBuffer));
+
+  return img;
+}
+
 void DemoDebugRenderer::debugInput(const Keyboard& kb)
 {
   if (kb[KeyboardKey::kQ] == ButtonState::Falling)
@@ -411,8 +665,8 @@ void DemoDebugRenderer::update(const FramePacket& packet)
     temporalCount = 0;
   }
 
-  if (newCubemapIdx != currentCubemapIdx) {
-    currentCubemapIdx = newCubemapIdx;
+  if (newEnvironmentIdx != currentEnvironmentIdx) {
+    currentEnvironmentIdx = newEnvironmentIdx;
     temporalCount = 0;
   }
 
@@ -451,7 +705,7 @@ void DemoDebugRenderer::renderScene(
   auto meshes = sceneMgr->getMeshes();
   auto relems = sceneMgr->getRenderElements();
 
-  auto& cubemap = cubemaps[currentCubemapIdx];
+  auto& environment = environments[currentEnvironmentIdx];
 
   for (std::size_t instIdx = 0; instIdx < instanceMeshes.size(); ++instIdx)
   {
@@ -463,14 +717,23 @@ void DemoDebugRenderer::renderScene(
       glm::mat4x4 model;
       glm::mat3x4 normalMatrix;
       uint32_t temporalCount;
-    } pushConst {
+      float metalness;
+      float roughness;
+      uint envMapMips;
+    } pushConst{
       .model = instanceMatrices[instIdx],
       .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
-      .temporalCount = static_cast<uint32_t>(temporalCount)
+      .temporalCount = static_cast<uint32_t>(temporalCount),
+      .metalness = metalness,
+      .roughness = roughness,
+      .envMapMips = PREFILTERED_ENV_MAP_MIPS,
     };
 
     cmd_buf.pushConstants<PushConstant>(
-      info.getPipelineLayout(), vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment, 0, {pushConst});
+      info.getPipelineLayout(),
+      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment,
+      0,
+      {pushConst});
 
     const auto meshIdx = instanceMeshes[instIdx];
 
@@ -484,30 +747,35 @@ void DemoDebugRenderer::renderScene(
       {
         etna::DescriptorSet materialSet;
 
-        if (useSH) {
+        switch (currentMethod)
+        {
+        case eDiffuseSH: {
           materialSet = etna::create_descriptor_set(
-          info.getDescriptorLayoutId(1),
-          cmd_buf,
-          {
-            etna::Binding{
-              0,
-              mat.texAlbedo->genBinding(
-                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{
-              1,
-              mat.texMetalnessRoughness->genBinding(
-                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{
-              2,
-              mat.texNorm->genBinding(
-                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{
-              3,
-              mat.texEmissive->genBinding(
-                linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
-            etna::Binding{4, diffuseIrradianceCoeffs[currentCubemapIdx].genBinding()},
-          });
-        } else {
+            info.getDescriptorLayoutId(1),
+            cmd_buf,
+            {
+              etna::Binding{
+                0,
+                mat.texAlbedo->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                1,
+                mat.texMetalnessRoughness->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                2,
+                mat.texNorm->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                3,
+                mat.texEmissive->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{4, environment.diffuseIrradianceCoeffs.genBinding()},
+            });
+          break;
+        }
+
+        case eDiffuseNoPrecompute: {
           materialSet = etna::create_descriptor_set(
             info.getDescriptorLayoutId(1),
             cmd_buf,
@@ -530,7 +798,49 @@ void DemoDebugRenderer::renderScene(
                   linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 4,
-                cubemap.genBinding(
+                environment.cubemap.genBinding(
+                  linearSampler.get(),
+                  vk::ImageLayout::eShaderReadOnlyOptimal,
+                  etna::Image::ViewParams{
+                    0,
+                    1,
+                    0,
+                    vk::RemainingArrayLayers,
+                    {},
+                    vk::ImageViewType::eCube,
+                  })},
+              etna::Binding{
+                5,
+                temporalDiffuseIrradiance[temporalCount % 2].genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+            });
+          break;
+        }
+
+        case eSpecularIBL: {
+          materialSet = etna::create_descriptor_set(
+            info.getDescriptorLayoutId(1),
+            cmd_buf,
+            {
+              etna::Binding{
+                0,
+                mat.texAlbedo->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                1,
+                mat.texMetalnessRoughness->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                2,
+                mat.texNorm->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                3,
+                mat.texEmissive->genBinding(
+                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+              etna::Binding{
+                4,
+                environment.prefilteredEnvMap.genBinding(
                   linearSampler.get(),
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   etna::Image::ViewParams{
@@ -543,10 +853,11 @@ void DemoDebugRenderer::renderScene(
                   })},
               etna::Binding{
                 5,
-                temporalDiffuseIrradiance[temporalCount % 2].genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                envBRDF.genBinding(linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
             });
+          break;
         }
+        };
 
         cmd_buf.bindDescriptorSets(
           vk::PipelineBindPoint::eGraphics,
@@ -566,7 +877,7 @@ void DemoDebugRenderer::renderWorld(
 {
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
-  auto& cubemap = cubemaps[currentCubemapIdx];
+  auto& environment = environments[currentEnvironmentIdx];
 
   {
     ETNA_PROFILE_GPU(cmd_buf, demoDiffuseIndirect);
@@ -607,8 +918,13 @@ void DemoDebugRenderer::renderWorld(
       vk::ImageAspectFlagBits::eColor);
     etna::flush_barriers(cmd_buf);
 
-    auto demoPassInfo = useSH ? etna::get_shader_program("demo_diffuse_sh")
-                              : etna::get_shader_program("demo_diffuse_indirect");
+    std::array<etna::ShaderProgramInfo, 3U> demoPassInfos = {
+      etna::get_shader_program("demo_diffuse_sh"),
+      etna::get_shader_program("demo_diffuse_indirect"),
+      etna::get_shader_program("demo_specular_ibl"),
+    };
+
+    auto demoPassInfo = demoPassInfos[currentMethod];
     auto cameraSet = etna::create_descriptor_set(
       demoPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
@@ -623,12 +939,12 @@ void DemoDebugRenderer::renderWorld(
       {
         etna::Binding{
           0,
-          cubemap.genBinding(
+          environment.prefilteredEnvMap.genBinding(
             linearSampler.get(),
             vk::ImageLayout::eShaderReadOnlyOptimal,
             etna::Image::ViewParams{
-              0,
-              vk::RemainingMipLevels,
+              static_cast<uint32_t>(currentCubemapMip),
+              1,
               0,
               vk::RemainingArrayLayers,
               {},
@@ -656,24 +972,20 @@ void DemoDebugRenderer::renderWorld(
 
       {.image = depth.get(), .view = depth.getView({})});
 
-    if (useSH) {
-      cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, demoDiffuseSHPipeline.getVkPipeline());
-      cmd_buf.bindDescriptorSets(
-        vk::PipelineBindPoint::eGraphics,
-        demoDiffuseSHPipeline.getVkPipelineLayout(),
-        0,
-        {cameraSet.getVkSet()},
-        {});
-    } else {
-      cmd_buf.bindPipeline(
-        vk::PipelineBindPoint::eGraphics, demoDiffuseIndirectPipeline.getVkPipeline());
-      cmd_buf.bindDescriptorSets(
-        vk::PipelineBindPoint::eGraphics,
-        demoDiffuseIndirectPipeline.getVkPipelineLayout(),
-        0,
-        {cameraSet.getVkSet()},
-        {});
-    }
+    std::array<etna::GraphicsPipeline*, 3U> pipelines = {
+      &demoDiffuseSHPipeline,
+      &demoDiffuseIndirectPipeline,
+      &demoSpecularIBLPipeline,
+    };
+
+    auto& pipeline = *pipelines[currentMethod];
+    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, pipeline.getVkPipeline());
+    cmd_buf.bindDescriptorSets(
+      vk::PipelineBindPoint::eGraphics,
+      pipeline.getVkPipelineLayout(),
+      0,
+      {cameraSet.getVkSet()},
+      {});
 
     renderScene(cmd_buf, demoPassInfo, true);
 
@@ -709,58 +1021,74 @@ void DemoDebugRenderer::drawGui()
 
   ImGui::NewLine();
 
-  ImGui::Combo("Cubemap", &newCubemapIdx, CUBEMAP_NAMES.data(), static_cast<int32_t>(CUBEMAP_NAMES.size()));
+  ImGui::Combo(
+    "Environment",
+    &newEnvironmentIdx,
+    CUBEMAP_NAMES.data(),
+    static_cast<int32_t>(CUBEMAP_NAMES.size()));
+
+  ImGui::SliderInt("Cubemap mip", &currentCubemapMip, 0, PREFILTERED_ENV_MAP_MIPS - 1);
 
   ImGui::NewLine();
 
-  static bool tmpUseSH = useSH;
-  ImGui::Checkbox("Use Spherical Harmonics", &tmpUseSH);
-  if (tmpUseSH != useSH && !tmpUseSH) {
+  static Method tmpMethod = currentMethod;
+  ImGui::Combo(
+    "Method",
+    reinterpret_cast<int32_t*>(&tmpMethod),
+    METHOD_NAMES.data(),
+    static_cast<int32_t>(METHOD_NAMES.size()));
+
+  if (tmpMethod != currentMethod && tmpMethod == eDiffuseNoPrecompute) {
     temporalCount = 0U;
   }
 
-  useSH = tmpUseSH;
+  currentMethod = tmpMethod;
 
   ImGui::NewLine();
 
-  constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
-    ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
-  if (ImGui::BeginTable("table1", 4, FLAGS))
-  {
-    ImGui::TableSetupColumn("L_l,m");
-    ImGui::TableSetupColumn("R");
-    ImGui::TableSetupColumn("G");
-    ImGui::TableSetupColumn("B");
-    ImGui::TableHeadersRow();
-
-    constexpr std::array ROW_NAMES = {
-      "L_0,0",
-      "L_1,1",
-      "L_1,0",
-      "L_1,-1",
-      "L_2,1",
-      "L_2,-1",
-      "L_2,_2",
-      "L_2,0",
-      "L_2,2",
-    };
-
-    for (size_t row = 0; row < ROW_NAMES.size(); ++row)
+  if (currentMethod == eDiffuseSH) {
+    constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
+      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
+    if (ImGui::BeginTable("table1", 4, FLAGS))
     {
-      ImGui::TableNextRow();
+      ImGui::TableSetupColumn("L_l,m");
+      ImGui::TableSetupColumn("R");
+      ImGui::TableSetupColumn("G");
+      ImGui::TableSetupColumn("B");
+      ImGui::TableHeadersRow();
 
-      ImGui::TableSetColumnIndex(0);
-      ImGui::Text("%s", ROW_NAMES[row]);
+      constexpr std::array ROW_NAMES = {
+        "L_0,0",
+        "L_1,1",
+        "L_1,0",
+        "L_1,-1",
+        "L_2,1",
+        "L_2,-1",
+        "L_2,_2",
+        "L_2,0",
+        "L_2,2",
+      };
 
-      const auto* coeffs = &cpuDiffuseIrradianceCoeffs[currentCubemapIdx][3U * row];
-
-      for (size_t column = 0; column < 3; ++column)
+      for (size_t row = 0; row < ROW_NAMES.size(); ++row)
       {
-        ImGui::TableSetColumnIndex(column + 1);
-        ImGui::Text("%f", coeffs[column]);
+        ImGui::TableNextRow();
+
+        ImGui::TableSetColumnIndex(0);
+        ImGui::Text("%s", ROW_NAMES[row]);
+
+        const auto* coeffs = &environments[currentEnvironmentIdx].shCoeffs[3U * row];
+
+        for (size_t column = 0; column < 3; ++column)
+        {
+          ImGui::TableSetColumnIndex(column + 1);
+          ImGui::Text("%f", coeffs[column]);
+        }
       }
+      ImGui::EndTable();
     }
-    ImGui::EndTable();
+  } else if (currentMethod == eSpecularIBL) {
+    ImGui::SliderFloat("Roughness", &roughness, 0.001f, 0.999f, "r = %.3f");
+    ImGui::SliderFloat("Metalness", &metalness, 0.001f, 0.999f, "m = %.3f");
   }
 
   ImGui::NewLine();
