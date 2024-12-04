@@ -10,7 +10,7 @@ layout(set = 0, binding = 0, rg16f) uniform writeonly image2D out_envBRDF;
 
 vec2 IntegrateBRDF(float roughness, float NoV) {
   vec3 n   = vec3(0.0f, 0.0f, 1.0f);
-  mat3 tbn = mat3(vec3(0.0f, 1.0f, 0.0f), vec3(1.0f, 0.0f, 0.0f), n);
+  mat3 tbn = mat3(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), n);
 
   // Choosing v to be in the XZ plane
   vec3 v;
@@ -28,12 +28,11 @@ vec2 IntegrateBRDF(float roughness, float NoV) {
     vec2 uniformSample = Hammersley(i, NUM_SAMPLES);
 
     vec3 h = ImportanceSampleGGX(uniformSample, roughness, tbn);
-    vec3 l = normalize(2.0f * dot(v, h) * h - v);
-
     float NoH = clamp(h.z, 0.0f, 1.0f);
     float VoH = clamp(dot(v, h), 0.0f, 1.0f);
 
-    float NoL = clamp(l.z, 0.0f, 1.0f);
+    vec3 l = 2.0f * VoH * h - v;
+    float NoL = l.z;
     if (NoL > 0.0f) {
       float Fc = pow(1.0f - VoH, 5.0f);
 
@@ -58,10 +57,7 @@ void main() {
     return;
   }
 
-  vec2 invResolution = 1.0f / vec2(resolution);
-
-  vec2 uv = vec2(coord + 0.5f) * invResolution;
-  uv.y = 1.0f - uv.y;
+  vec2 uv = vec2(coord + 0.5f) / vec2(resolution);
 
   float roughness = uv.y;
   float NoV = uv.x;

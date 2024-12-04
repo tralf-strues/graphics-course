@@ -42,10 +42,18 @@ void DemoDebugRenderer::allocateResources(glm::uvec2 swapchain_resolution)
 
   resolution = swapchain_resolution;
 
-  linearSampler = etna::Sampler(etna::Sampler::CreateInfo{
+  linearSamplerRepeat = etna::Sampler(etna::Sampler::CreateInfo{
     .filter = vk::Filter::eLinear,
     .addressMode = vk::SamplerAddressMode::eRepeat,
-    .name = "linearSampler",
+    .name = "linearSamplerRepeat",
+    .minLod = 0.0f,
+    .maxLod = vk::LodClampNone,
+  });
+
+  linearSamplerClampToEdge = etna::Sampler(etna::Sampler::CreateInfo{
+    .filter = vk::Filter::eLinear,
+    .addressMode = vk::SamplerAddressMode::eClampToEdge,
+    .name = "linearSamplerClampToEdge",
     .minLod = 0.0f,
     .maxLod = vk::LodClampNone,
   });
@@ -320,7 +328,7 @@ etna::Image DemoDebugRenderer::loadCubemap(std::filesystem::path path)
     {
       etna::Binding(
         0,
-        environmentRect.genBinding(linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        environmentRect.genBinding(linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
       etna::Binding(
         1,
@@ -518,7 +526,7 @@ etna::Image DemoDebugRenderer::prefilterEnvMap(etna::Image& cubemap)
         etna::Binding(
           0,
           cubemap.genBinding(
-            linearSampler.get(),
+            linearSamplerRepeat.get(),
             vk::ImageLayout::eShaderReadOnlyOptimal,
             etna::Image::ViewParams{
               0,
@@ -532,7 +540,7 @@ etna::Image DemoDebugRenderer::prefilterEnvMap(etna::Image& cubemap)
         etna::Binding(
           1,
           prefilteredEnvMap.genBinding(
-            linearSampler.get(),
+            linearSamplerRepeat.get(),
             vk::ImageLayout::eGeneral,
             etna::Image::ViewParams{
               static_cast<uint32_t>(mip),
@@ -719,7 +727,7 @@ void DemoDebugRenderer::renderScene(
       uint32_t temporalCount;
       float metalness;
       float roughness;
-      uint envMapMips;
+      uint32_t envMapMips;
     } pushConst{
       .model = instanceMatrices[instIdx],
       .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
@@ -757,19 +765,19 @@ void DemoDebugRenderer::renderScene(
               etna::Binding{
                 0,
                 mat.texAlbedo->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 1,
                 mat.texMetalnessRoughness->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 2,
                 mat.texNorm->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 3,
                 mat.texEmissive->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{4, environment.diffuseIrradianceCoeffs.genBinding()},
             });
           break;
@@ -783,23 +791,23 @@ void DemoDebugRenderer::renderScene(
               etna::Binding{
                 0,
                 mat.texAlbedo->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 1,
                 mat.texMetalnessRoughness->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 2,
                 mat.texNorm->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 3,
                 mat.texEmissive->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 4,
                 environment.cubemap.genBinding(
-                  linearSampler.get(),
+                  linearSamplerRepeat.get(),
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   etna::Image::ViewParams{
                     0,
@@ -812,7 +820,7 @@ void DemoDebugRenderer::renderScene(
               etna::Binding{
                 5,
                 temporalDiffuseIrradiance[temporalCount % 2].genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
             });
           break;
         }
@@ -825,23 +833,23 @@ void DemoDebugRenderer::renderScene(
               etna::Binding{
                 0,
                 mat.texAlbedo->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 1,
                 mat.texMetalnessRoughness->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 2,
                 mat.texNorm->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 3,
                 mat.texEmissive->genBinding(
-                  linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                  linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
               etna::Binding{
                 4,
                 environment.prefilteredEnvMap.genBinding(
-                  linearSampler.get(),
+                  linearSamplerRepeat.get(),
                   vk::ImageLayout::eShaderReadOnlyOptimal,
                   etna::Image::ViewParams{
                     0,
@@ -853,7 +861,7 @@ void DemoDebugRenderer::renderScene(
                   })},
               etna::Binding{
                 5,
-                envBRDF.genBinding(linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
+                envBRDF.genBinding(linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)},
             });
           break;
         }
@@ -878,6 +886,40 @@ void DemoDebugRenderer::renderWorld(
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
   auto& environment = environments[currentEnvironmentIdx];
+
+  // {
+  //   ETNA_PROFILE_GPU(cmd_buf, recomputeEnvBrdf);
+
+  //   auto programInfo = etna::get_shader_program("compute_env_brdf");
+  //   auto descriptorSet = etna::create_descriptor_set(
+  //     programInfo.getDescriptorLayoutId(0),
+  //     cmd_buf,
+  //     {
+  //       etna::Binding(
+  //         0,
+  //         envBRDF.genBinding(pointSampler.get(), vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
+  //     });
+  //   etna::flush_barriers(cmd_buf);
+
+  //   cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, computeEnvBRDFPipeline.getVkPipeline());
+  //   cmd_buf.bindDescriptorSets(
+  //     vk::PipelineBindPoint::eCompute,
+  //     computeEnvBRDFPipeline.getVkPipelineLayout(),
+  //     0,
+  //     {descriptorSet.getVkSet()},
+  //     {});
+
+  //   cmd_buf.dispatch(512 / 32, 512 / 32, 1);
+
+  //   etna::set_state(
+  //     cmd_buf,
+  //     envBRDF.get(),
+  //     vk::PipelineStageFlagBits2::eFragmentShader,
+  //     vk::AccessFlagBits2::eShaderSampledRead,
+  //     vk::ImageLayout::eShaderReadOnlyOptimal,
+  //     vk::ImageAspectFlagBits::eColor);
+  //   etna::flush_barriers(cmd_buf);
+  // }
 
   {
     ETNA_PROFILE_GPU(cmd_buf, demoDiffuseIndirect);
@@ -940,7 +982,7 @@ void DemoDebugRenderer::renderWorld(
         etna::Binding{
           0,
           environment.prefilteredEnvMap.genBinding(
-            linearSampler.get(),
+            linearSamplerRepeat.get(),
             vk::ImageLayout::eShaderReadOnlyOptimal,
             etna::Image::ViewParams{
               static_cast<uint32_t>(currentCubemapMip),
@@ -1080,7 +1122,7 @@ void DemoDebugRenderer::drawGui()
 
         for (size_t column = 0; column < 3; ++column)
         {
-          ImGui::TableSetColumnIndex(column + 1);
+          ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
           ImGui::Text("%f", coeffs[column]);
         }
       }

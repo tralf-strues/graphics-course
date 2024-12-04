@@ -78,7 +78,7 @@ void main()
   point.toCam     = normalize(camera.wsPos - point.position);
   point.albedo    = texture(texAlbedo, vertex.texCoord).rgb;
 
-  point.metalness = params.metalness;
+  point.metalness = texture(texMetalnessRoughness, vertex.texCoord).b * params.metalness;
   point.roughness = texture(texMetalnessRoughness, vertex.texCoord).g * params.roughness;
 
   point.f0        = vec3(0.04f);

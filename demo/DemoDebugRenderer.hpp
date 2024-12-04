@@ -60,7 +60,8 @@ private:
 
   std::unique_ptr<SceneManager> sceneMgr;
 
-  etna::Sampler linearSampler;
+  etna::Sampler linearSamplerRepeat;
+  etna::Sampler linearSamplerClampToEdge;
   etna::Sampler pointSampler;
 
   glm::uvec2 resolution;
@@ -94,6 +95,6 @@ private:
 
   Method currentMethod = eDiffuseSH;
 
-  float metalness = 0.0f;
-  float roughness = 0.0f;
+  float metalness = 0.4f;
+  float roughness = 0.15f;
 };
