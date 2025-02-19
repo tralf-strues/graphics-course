@@ -2,6 +2,8 @@
 
 #include <stack>
 
+#include "render_utils/Utils.cpp"
+
 #include <spdlog/spdlog.h>
 #include <fmt/std.h>
 #include <glm/ext/matrix_transform.hpp>
@@ -47,91 +49,7 @@ etna::Image SceneManager::createAndUploadImage(const tinygltf::Image& src, vk::F
   auto cmdBuffer = oneShotCommands->start();
   ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
 
-  /* Transition mip 0 to transfer src */
-  etna::set_state(
-    cmdBuffer,
-    img.get(),
-    vk::PipelineStageFlagBits2::eTransfer,
-    vk::AccessFlagBits2::eTransferRead,
-    vk::ImageLayout::eTransferSrcOptimal,
-    vk::ImageAspectFlagBits::eColor);
-
-  etna::flush_barriers(cmdBuffer);
-
-  /* Transition mips [1, mips - 1] to transfer dst */
-  vk::ImageMemoryBarrier barrier;
-  barrier.setImage(img.get());
-  barrier.setSrcAccessMask(vk::AccessFlagBits::eNone);
-  barrier.setDstAccessMask(vk::AccessFlagBits::eTransferWrite);
-  barrier.setOldLayout(vk::ImageLayout::eUndefined);
-  barrier.setNewLayout(vk::ImageLayout::eTransferDstOptimal);
-  barrier.setSubresourceRange(vk::ImageSubresourceRange{
-    vk::ImageAspectFlagBits::eColor,
-    /*baseMip=*/1,
-    /*levelCount=*/mips - 1,
-    0,
-    1,
-  });
-
-  cmdBuffer.pipelineBarrier(
-    vk::PipelineStageFlagBits::eTopOfPipe,
-    vk::PipelineStageFlagBits::eTransfer,
-    {},
-    {},
-    {},
-    barrier);
-
-  for (uint32_t mip = 1; mip < mips; ++mip) {
-    uint32_t mipWidth = src.width >> mip;
-    uint32_t mipHeight = src.height >> mip;
-
-    vk::ImageBlit blit;
-    blit.srcOffsets[0] = vk::Offset3D{0, 0, 0};
-    blit.srcOffsets[1] = vk::Offset3D{
-      static_cast<int32_t>(mipWidth << 1),
-      static_cast<int32_t>(mipHeight << 1),
-      1,
-    };
-
-    blit.dstOffsets[0] = vk::Offset3D{0, 0, 0};
-    blit.dstOffsets[1] = vk::Offset3D{
-      static_cast<int32_t>(mipWidth),
-      static_cast<int32_t>(mipHeight),
-      1,
-    };
-
-    blit.setSrcSubresource({vk::ImageAspectFlagBits::eColor, mip - 1, 0, 1});
-    blit.setDstSubresource({vk::ImageAspectFlagBits::eColor, mip, 0, 1});
-
-    cmdBuffer.blitImage(
-      img.get(),
-      vk::ImageLayout::eTransferSrcOptimal,
-      img.get(),
-      vk::ImageLayout::eTransferDstOptimal,
-      blit,
-      vk::Filter::eLinear);
-
-    /* Transition mip to transfer src */
-    barrier.setSrcAccessMask(vk::AccessFlagBits::eTransferWrite);
-    barrier.setDstAccessMask(vk::AccessFlagBits::eTransferRead);
-    barrier.setOldLayout(vk::ImageLayout::eTransferDstOptimal);
-    barrier.setNewLayout(vk::ImageLayout::eTransferSrcOptimal);
-    barrier.setSubresourceRange(vk::ImageSubresourceRange{
-      vk::ImageAspectFlagBits::eColor,
-      /*baseMip=*/mip,
-      /*levelCount=*/1,
-      0,
-      1,
-    });
-
-    cmdBuffer.pipelineBarrier(
-      vk::PipelineStageFlagBits::eTransfer,
-      vk::PipelineStageFlagBits::eTransfer,
-      {},
-      {},
-      {},
-      barrier);
-  }
+  generate_mips(cmdBuffer, img);
 
   etna::set_state(
     cmdBuffer,
@@ -197,6 +115,7 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     const auto& pbr = srcMat.pbrMetallicRoughness;
 
     auto& mat = result.materials.emplace_back();
+    mat.name = srcMat.name;
 
     const auto setTexture =
       [this, &result, &model](std::size_t idx, vk::Format format) -> etna::Image* {
@@ -215,7 +134,7 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     mat.texNorm = setTexture(srcMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm);
     mat.texEmissive = setTexture(srcMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb);
 
-    mat.colorAlbedo = glm::make_vec3(pbr.baseColorFactor.data());
+    mat.albedo = glm::make_vec3(pbr.baseColorFactor.data());
     mat.metalness = static_cast<float>(pbr.metallicFactor);
     mat.roughness = static_cast<float>(pbr.roughnessFactor);
   }

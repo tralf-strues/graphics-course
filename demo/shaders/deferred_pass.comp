@@ -1,119 +1,11 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "Light.h"
 #include "CameraData.h"
-
-//==================================================================================================
-// PBR
-//--------------------------------------------------------------------------------------------------
-const float PI = 3.14159265359f;
-
-struct SurfacePoint
-{
-  vec3  normal;
-  vec3  position;
-  vec3  toCam;
-
-  vec3  albedo;
-  float metalness;
-  float roughness;
-  vec3  f0;
-};
-
-struct LightSample
-{
-  vec3  toLight;
-  vec3  halfVector;
-  vec3  radiance;
-};
-
-vec3 DiffuseBRDF(SurfacePoint point, LightSample light, vec3 fresnel);
-vec3 SpecularBRDF(SurfacePoint point, LightSample light, vec3 fresnel);
-
-float NDF_TRGGX(vec3 n, vec3 h, float roughness);
-vec3  FresnelSchlick(vec3 h, vec3 v, vec3 f0);
-float GSF_SchlickGGX(vec3 n, vec3 v, float k);
-float GSF_SmithSchlickGGX(vec3 n, vec3 v, vec3 l, float k);
-
-vec3 CalculateRadiance(SurfacePoint point, LightSample light)
-{
-  // Fresnel Function
-  // aka how much light is reflected
-  vec3 fresnel = FresnelSchlick(light.halfVector, point.toCam, point.f0);
-
-  vec3 BRDF     = DiffuseBRDF(point, light, fresnel) + SpecularBRDF(point, light, fresnel);
-  vec3 radiance = BRDF * light.radiance * max(dot(point.normal, light.toLight), 0.0f);
-
-  return radiance;
-}
-
-vec3 DiffuseBRDF(SurfacePoint point, LightSample light, vec3 fresnel)
-{
-  vec3 Kd      = (1.0f - fresnel) * (1.0f - point.metalness);
-  vec3 diffuse = point.albedo / PI;
-
-  return Kd * diffuse;
-}
-
-vec3 SpecularBRDF(SurfacePoint point, LightSample light, vec3 fresnel)
-{
-  // Normal Distribution Function
-  // aka alignment of microfacets to the halfway vector
-  float NDF                 = NDF_TRGGX(point.normal, light.halfVector, point.roughness);
-
-  // Geometry Shadowing Function
-  // aka coefficient on the amount of light, which is self-shadowed or obstructed
-  float k                   = (point.roughness + 1.0f) *
-                               (point.roughness + 1.0f) / 8.0f;  // Roughness remapping
-  float GSF                 = GSF_SmithSchlickGGX(point.normal, point.toCam, light.toLight, k);
-
-  // Specular part
-  vec3  Ks                  = fresnel;
-  float specularNumerator   = NDF * GSF;
-  float specularDenominator = 4.0f *
-                              max(dot(point.normal, point.toCam),   0.0f) *
-                              max(dot(point.normal, light.toLight), 0.0f) +
-                              0.0001f; // Used to avoid division by zero
-  float specular            = specularNumerator / specularDenominator;
-
-  return Ks * specular;
-}
-
-float NDF_TRGGX(vec3 n, vec3 h, float roughness)
-{
-  float ggxAlpha    = roughness * roughness;  // Apparently looks better
-  float ggxAlpha2   = ggxAlpha * ggxAlpha;
-
-  float nh          = max(dot(n, h), 0.0f);
-
-  float numerator   = ggxAlpha2;
-  float denominator = nh * nh * (ggxAlpha2 - 1.0) + 1.0;
-        denominator = PI * denominator * denominator;
-
-  return numerator / denominator;
-}
-
-vec3 FresnelSchlick(vec3 h, vec3 v, vec3 f0)
-{
-  return f0 + (1.0 - f0) * pow(clamp(1.0f - max(dot(h, v), 0.0f), 0.0f, 1.0f), 5.0f);
-}
-
-float GSF_SchlickGGX(vec3 n, vec3 v, float k)
-{
-  float nv = max(dot(n, v), 0.0f);
-  return nv / (nv * (1.0f - k) + k);
-}
-
-float GSF_SmithSchlickGGX(vec3 n, vec3 v, vec3 l, float k)
-{
-  float shadowing   = GSF_SchlickGGX(n, l, k);
-  float obstruction = GSF_SchlickGGX(n, v, k);
-
-  return shadowing * obstruction;
-}
-//==================================================================================================
+#include "PBR.glsl"
 
 //==================================================================================================
 // Descriptor bindings / push constants
@@ -130,13 +22,15 @@ layout(set = 1, binding = 2) uniform sampler2D gbufferMetalnessRoughness;
 layout(set = 1, binding = 3) uniform sampler2D gbufferWsNorm;
 layout(set = 1, binding = 4) uniform sampler2D depthBuffer;
 layout(set = 1, binding = 5) uniform sampler2D shadowMap;
+layout(set = 1, binding = 6) uniform samplerCube texPrefilteredEnvMap;
+layout(set = 1, binding = 7) uniform sampler2D texEnvBRDF;
 
-layout(set = 1, binding = 6) uniform shadow_camera_data_t
+layout(set = 1, binding = 8) uniform shadow_camera_data_t
 {
   CameraData shadowCamera;
 };
 
-layout(set = 1, binding = 7, std430) readonly buffer light_data_t
+layout(set = 1, binding = 9, std430) readonly buffer light_data_t
 {
   DirectionalLight dirLight;
 
@@ -144,6 +38,10 @@ layout(set = 1, binding = 7, std430) readonly buffer light_data_t
   uint _pad0[3];
 
   PointLight pointLights[];
+};
+
+layout(set = 1, binding = 10, scalar) readonly buffer DiffuseIrradianceSH {
+  vec3 E_lm[9];
 };
 
 layout(push_constant) uniform params_t
@@ -155,8 +53,37 @@ layout(push_constant) uniform params_t
   float proj23;
   float invProj00; // Precomputed coefficient, 1 / proj[0][0]
   float invProj11; // Precomputed coefficient, 1 / proj[1][1]
+
+  uint envMapMips;
+  shader_bool enableEmission;
+  shader_bool enableDiffuseIBL;
+  shader_bool enableSpecularIBL;
+  shader_bool enableDirectionalLight;
+  shader_bool enablePointLights;
 } params;
 //==================================================================================================
+
+vec3 SpecularIBL(SurfacePoint point)
+{
+  float NoV = clamp(dot(point.normal, point.toCam), 0.5f / 512.0f, 1.0f);
+  vec3 R = reflect(-point.toCam, point.normal);
+
+  // Some remapping found in moving frostbite to PBR,
+  // yet to be understood :)
+  float smoothness = clamp(1.0f - point.roughness, 0.0f, 1.0f);
+  float lerpFactor = smoothness * (sqrt(smoothness) + point.roughness);
+  R = mix(point.normal, R, lerpFactor);
+
+  float mip = point.roughness * float(params.envMapMips - 1);
+  vec3 prefilteredColor = textureLod(texPrefilteredEnvMap, R, mip).rgb;
+
+  vec2 envBrdf = texture(texEnvBRDF, vec2(NoV, point.roughness)).rg;
+
+  vec3 F = FresnelSchlick(point.normal, point.toCam, point.f0);
+
+  // return vec3(envBrdf.r, envBrdf.g, 0.0f);
+  return prefilteredColor * (F * envBrdf.r + envBrdf.g);
+}
 
 layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
 void main()
@@ -164,7 +91,8 @@ void main()
   /* Getting the target image coords*/
   // TODO (tralf-strues): swizzling
   uvec2 coord = gl_GlobalInvocationID.xy;
-  if (coord.x >= params.resolution.x || coord.y >= params.resolution.y) {
+  if (coord.x >= params.resolution.x || coord.y >= params.resolution.y)
+  {
     return;
   }
 
@@ -196,40 +124,79 @@ void main()
   point.normal      = normalize(255.0f / 127.0f * point.normal - 128.0f / 127.0f);
   point.toCam       = normalize(camera.wsPos - point.position);
 
-  // Indirect lighting for now
-  vec3 L0 = (point.f0 / PI) * vec3(0.3f);
+  /* Lighting */
+  vec3 L0 = vec3(0.0f);
+
+  // Diffuse IBL
+  if (params.enableDiffuseIBL)
+  {
+    float Y_lm[9] = {
+      0.282095,
+      0.488603 * point.normal.x,
+      0.488603 * point.normal.z,
+      0.488603 * point.normal.y,
+      1.092548 * point.normal.x * point.normal.z,
+      1.092548 * point.normal.y * point.normal.z,
+      1.092548 * point.normal.y * point.normal.x,
+      0.946176 * point.normal.z * point.normal.z - 0.315392,
+      0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y),
+    };
+
+    vec3 E = vec3(0.0f);
+    for (uint i = 0; i < 9; ++i)
+    {
+      E += E_lm[i] * Y_lm[i];
+    }
+
+    L0 += E * LambertianDiffuseBRDF(point);
+  }
+
+  // Specular IBL
+  if (params.enableSpecularIBL)
+  {
+    L0 += SpecularIBL(point);
+  }
 
   // Emission
-  L0 += vec3(sampledAlbedo.a, sampledMetalnessRoughness.ba);
-
-  /* Lighting: directional light */
-  LightSample dirLightSample;
-  dirLightSample.toLight    = -dirLight.direction;
-  dirLightSample.halfVector = normalize(point.toCam + dirLightSample.toLight);
-  dirLightSample.radiance   = dirLight.radiance;
-
-  L0 += CalculateRadiance(point, dirLightSample);
-
-  /* Lighting: point lights */
-  for (uint i = 0; i < pointLightCount; ++i)
+  if (params.enableEmission)
   {
-    PointLight pointLight = pointLights[i];
+    L0 += vec3(sampledAlbedo.a, sampledMetalnessRoughness.ba);
+  }
 
-    LightSample pointLightSample;
-    pointLightSample.toLight    = normalize(pointLight.position - point.position);
-    pointLightSample.halfVector = normalize(point.toCam + pointLightSample.toLight);
-    pointLightSample.radiance   = pointLight.radiance;
+  // Directional light
+  if (params.enableDirectionalLight)
+  {
+    LightSample dirLightSample;
+    dirLightSample.toLight    = -dirLight.direction;
+    dirLightSample.halfVector = normalize(point.toCam + dirLightSample.toLight);
+    dirLightSample.radiance   = dirLight.radiance;
 
-    // Attenuation with the fallof exactly at the light's radius.
-    // Borrowed from: https://lisyarus.github.io/blog/posts/point-light-attenuation.html
-    float dist                  = length(pointLight.position - point.position) / pointLight.radius;
-    float dist2                 = dist * dist;
-    float numerator             = max(1.0f - dist2, 0.0f);
-    numerator                  *= numerator;
-    float attenuation           = numerator / (1.0f + 4.0f * dist2);
-    pointLightSample.radiance  *= attenuation;
+    L0 += CalculateRadiance(point, dirLightSample);
+  }
 
-    L0 += CalculateRadiance(point, pointLightSample);
+  // Point lights
+  if (params.enablePointLights)
+  {
+    for (uint i = 0; i < pointLightCount; ++i)
+    {
+      PointLight pointLight = pointLights[i];
+
+      LightSample pointLightSample;
+      pointLightSample.toLight    = normalize(pointLight.position - point.position);
+      pointLightSample.halfVector = normalize(point.toCam + pointLightSample.toLight);
+      pointLightSample.radiance   = pointLight.radiance;
+
+      // Attenuation with the fallof exactly at the light's radius.
+      // Borrowed from: https://lisyarus.github.io/blog/posts/point-light-attenuation.html
+      float dist                  = length(pointLight.position - point.position) / pointLight.radius;
+      float dist2                 = dist * dist;
+      float numerator             = max(1.0f - dist2, 0.0f);
+      numerator                  *= numerator;
+      float attenuation           = numerator / (1.0f + 4.0f * dist2);
+      pointLightSample.radiance  *= attenuation;
+
+      L0 += CalculateRadiance(point, pointLightSample);
+    }
   }
 
   imageStore(out_color, ivec2(coord), vec4(L0, 1.0f));

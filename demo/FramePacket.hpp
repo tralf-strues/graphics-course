@@ -13,6 +13,7 @@ struct FramePacket
 {
   Camera mainCam;
   float currentTime = 0;
+  bool cameraMoved = false;
 
   std::span<const PointLight> pointLights;
   DirectionalLight dirLight;

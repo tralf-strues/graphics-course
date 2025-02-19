@@ -18,6 +18,10 @@ layout(push_constant) uniform params_t
 {
   mat4 model;
   mat3 normalMatrix;
+
+  vec3 albedo;
+  float metalness;
+  float roughness;
 } params;
 //==================================================================================================
 

@@ -33,6 +33,11 @@ public:
 
   void debugInput(const Keyboard& kb);
   void update(const FramePacket& packet);
+
+  void beginGuiFrame();
+  void onGuiFrame();
+  void endGuiFrame();
+
   void drawFrame();
 
 private:

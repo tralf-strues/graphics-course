@@ -22,6 +22,8 @@ private:
   void processInput(float dt);
   void drawFrame();
 
+  void onGuiFrame();
+
   void moveCam(Camera& cam, const Keyboard& kb, float dt);
   void rotateCam(Camera& cam, const Mouse& ms, float dt);
 
@@ -33,6 +35,7 @@ private:
   float camRotateSpeed = 0.1f;
   float zoomSensitivity = 2.0f;
   Camera mainCam;
+  bool cameraMoved = false;
 
   DirectionalLight dirLight;
   std::vector<PointLight> pointLights;

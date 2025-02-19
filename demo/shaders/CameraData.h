@@ -6,6 +6,7 @@
 struct CameraData
 {
   shader_mat4 projView;
+  shader_mat4 proj;
   shader_mat4 view;
 
   shader_vec3 wsPos;

@@ -1,0 +1,68 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
+
+#include "Random.glsl"
+#include "PBR.glsl"
+
+layout(set = 0, binding = 0, rg16f) uniform writeonly image2D out_envBRDF;
+
+vec2 IntegrateBRDF(float roughness, float NoV) {
+  vec3 n   = vec3(0.0f, 0.0f, 1.0f);
+  mat3 tbn = mat3(vec3(1.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f), n);
+
+  // Choosing v to be in the XZ plane
+  vec3 v;
+  v.x = sqrt(1.0f - NoV * NoV);
+  v.y = 0.0f;
+  v.z = NoV;
+
+  float k = (roughness * roughness) / 2.0f;
+
+  float A = 0.0f;
+  float B = 0.0f;
+
+  const uint NUM_SAMPLES = 1024;
+  for (uint i = 0; i < NUM_SAMPLES; ++i) {
+    vec2 uniformSample = Hammersley(i, NUM_SAMPLES);
+
+    vec3 h = ImportanceSampleGGX(uniformSample, roughness, tbn);
+    float NoH = clamp(h.z, 0.0f, 1.0f);
+    float VoH = clamp(dot(v, h), 0.0f, 1.0f);
+
+    vec3 l = 2.0f * VoH * h - v;
+    float NoL = l.z;
+    if (NoL > 0.0f) {
+      float Fc = pow(1.0f - VoH, 5.0f);
+
+      float G = GSF_SmithSchlickGGX(n, v, l, k);
+
+      float G_Vis = G * VoH / (NoH * NoV);
+
+      A += (1.0f - Fc) * G_Vis;
+      B += Fc * G_Vis;
+    }
+  }
+
+  return vec2(A, B) / float(NUM_SAMPLES);
+}
+
+layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+void main() {
+  uvec2 resolution = imageSize(out_envBRDF);
+
+  uvec2 coord = gl_GlobalInvocationID.xy;
+  if (coord.x >= resolution.x || coord.y >= resolution.y) {
+    return;
+  }
+
+  vec2 uv = vec2(coord + 0.5f) / vec2(resolution);
+
+  float roughness = uv.y;
+  float NoV = uv.x;
+
+  vec2 coeffs = IntegrateBRDF(roughness, NoV);
+
+  imageStore(out_envBRDF, ivec2(gl_GlobalInvocationID), vec4(coeffs, 1.0f, 1.0f));
+}
