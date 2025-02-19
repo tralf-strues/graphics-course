@@ -11,15 +11,16 @@
 
 struct Material
 {
+  std::string name;
+
   etna::Image* texAlbedo;
   etna::Image* texMetalnessRoughness;
   etna::Image* texNorm;
   etna::Image* texEmissive;
 
-  // TODO (tralf-strues): actually use the values!
-  glm::vec3 colorAlbedo;
-  float metalness;
-  float roughness;
+  glm::vec3 albedo{1.0f};
+  float metalness{1.0f};
+  float roughness{1.0f};
 };
 
 // A single render element (relem) corresponds to a single draw call
@@ -59,6 +60,8 @@ public:
 
   // Every relem is a single draw call
   std::span<const RenderElement> getRenderElements() { return renderElements; }
+
+  std::span<Material> getMaterials() { return materials; }
 
   vk::Buffer getVertexBuffer() { return unifiedVbuf.get(); }
   vk::Buffer getIndexBuffer() { return unifiedIbuf.get(); }

@@ -8,10 +8,6 @@
 #include "PBR.glsl"
 #include "Random.glsl"
 
-const float A0 = 3.141593;
-const float A1 = 2.094395;
-const float A2 = 0.785398;
-
 //==================================================================================================
 // Descriptor bindings / push constants
 //--------------------------------------------------------------------------------------------------
@@ -26,15 +22,7 @@ layout(set = 1, binding = 2) uniform sampler2D texNorm;
 layout(set = 1, binding = 3) uniform sampler2D texEmissive;
 
 layout(set = 1, binding = 4, scalar) readonly buffer Coeffs {
-  vec3 L00;
-  vec3 L11;
-  vec3 L10;
-  vec3 L1_1;
-  vec3 L21;
-  vec3 L2_1;
-  vec3 L2_2;
-  vec3 L20;
-  vec3 L22;
+  vec3 E_lm[9];
 };
 
 layout(push_constant) uniform params_t
@@ -69,19 +57,23 @@ void main()
   point.position  = vertex.wsPos;
   point.albedo    = texture(texAlbedo, vertex.texCoord).rgb;
 
-  float Y00  = 0.282095;
-  float Y11  = 0.488603 * point.normal.x;
-  float Y10  = 0.488603 * point.normal.z;
-  float Y1_1 = 0.488603 * point.normal.y;
-  float Y21  = 1.092548 * point.normal.x * point.normal.z;
-  float Y2_1 = 1.092548 * point.normal.y * point.normal.z;
-  float Y2_2 = 1.092548 * point.normal.y * point.normal.x;
-  float Y20  = 0.946176 * point.normal.z * point.normal.z - 0.315392;
-  float Y22  = 0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y);
+  float Y_lm[9] = {
+    0.282095,
+    0.488603 * point.normal.x,
+    0.488603 * point.normal.z,
+    0.488603 * point.normal.y,
+    1.092548 * point.normal.x * point.normal.z,
+    1.092548 * point.normal.y * point.normal.z,
+    1.092548 * point.normal.y * point.normal.x,
+    0.946176 * point.normal.z * point.normal.z - 0.315392,
+    0.546274 * (point.normal.x * point.normal.x - point.normal.y * point.normal.y),
+  };
 
-  vec3 E = A0*Y00*L00
-         + A1*Y1_1*L1_1 + A1*Y10*L10 + A1*Y11*L11
-         + A2*Y2_2*L2_2 + A2*Y2_1*L2_1 + A2*Y20*L20 + A2*Y21*L21 + A2*Y22*L22;
+  vec3 E = vec3(0.0f);
+  for (uint i = 0; i < 9; ++i)
+  {
+    E += E_lm[i] * Y_lm[i];
+  }
 
   vec3 L0 = E * LambertianDiffuseBRDF(point);
 

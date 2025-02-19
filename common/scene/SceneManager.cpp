@@ -115,6 +115,7 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     const auto& pbr = srcMat.pbrMetallicRoughness;
 
     auto& mat = result.materials.emplace_back();
+    mat.name = srcMat.name;
 
     const auto setTexture =
       [this, &result, &model](std::size_t idx, vk::Format format) -> etna::Image* {
@@ -133,7 +134,7 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     mat.texNorm = setTexture(srcMat.normalTexture.index, vk::Format::eR8G8B8A8Unorm);
     mat.texEmissive = setTexture(srcMat.emissiveTexture.index, vk::Format::eR8G8B8A8Srgb);
 
-    mat.colorAlbedo = glm::make_vec3(pbr.baseColorFactor.data());
+    mat.albedo = glm::make_vec3(pbr.baseColorFactor.data());
     mat.metalness = static_cast<float>(pbr.metallicFactor);
     mat.roughness = static_cast<float>(pbr.roughnessFactor);
   }

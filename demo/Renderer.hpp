@@ -9,7 +9,6 @@
 
 #include "FramePacket.hpp"
 #include "WorldRenderer.hpp"
-#include "DemoDebugRenderer.hpp"
 
 
 class ImGuiRenderer;
@@ -50,5 +49,4 @@ private:
   std::unique_ptr<ImGuiRenderer> guiRenderer;
 
   std::unique_ptr<WorldRenderer> worldRenderer;
-  std::unique_ptr<DemoDebugRenderer> demoDebugRenderer;
 };

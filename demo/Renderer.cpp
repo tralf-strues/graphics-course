@@ -65,11 +65,6 @@ void Renderer::initFrameDelivery(vk::UniqueSurfaceKHR a_surface, ResolutionProvi
   worldRenderer->loadShaders();
   worldRenderer->setupPipelines(window->getCurrentFormat());
 
-  demoDebugRenderer = std::make_unique<DemoDebugRenderer>();
-  demoDebugRenderer->allocateResources(resolution);
-  demoDebugRenderer->loadShaders();
-  demoDebugRenderer->setupPipelines(window->getCurrentFormat());
-
   guiRenderer = std::make_unique<ImGuiRenderer>(window->getCurrentFormat());
 }
 
@@ -87,23 +82,19 @@ void Renderer::recreateSwapchain(glm::uvec2 res)
 
   // Most resources depend on the current resolution, so we recreate them.
   worldRenderer->allocateResources(resolution);
-  demoDebugRenderer->allocateResources(resolution);
 
   // Format of the swapchain CAN change on android
   worldRenderer->setupPipelines(window->getCurrentFormat());
-  demoDebugRenderer->setupPipelines(window->getCurrentFormat());
 }
 
 void Renderer::loadScene(std::filesystem::path path)
 {
   worldRenderer->loadScene(path);
-  demoDebugRenderer->loadScene(path);
 }
 
 void Renderer::debugInput(const Keyboard& kb)
 {
   worldRenderer->debugInput(kb);
-  demoDebugRenderer->debugInput(kb);
 
   if (kb[KeyboardKey::kB] == ButtonState::Falling)
   {
@@ -123,7 +114,6 @@ void Renderer::debugInput(const Keyboard& kb)
 void Renderer::update(const FramePacket& packet)
 {
   worldRenderer->update(packet);
-  demoDebugRenderer->update(packet);
 }
 
 void Renderer::beginGuiFrame()
@@ -134,8 +124,7 @@ void Renderer::beginGuiFrame()
 
 void Renderer::onGuiFrame()
 {
-  // worldRenderer->drawGui();
-  demoDebugRenderer->drawGui();
+  worldRenderer->drawGui();
 }
 
 void Renderer::endGuiFrame()
@@ -167,8 +156,7 @@ void Renderer::drawFrame()
     {
       ETNA_PROFILE_GPU(currentCmdBuf, renderFrame);
 
-      // worldRenderer->renderWorld(currentCmdBuf, image, view);
-      demoDebugRenderer->renderWorld(currentCmdBuf, image, view);
+      worldRenderer->renderWorld(currentCmdBuf, image, view);
 
       {
         ImDrawData* pDrawData = ImGui::GetDrawData();

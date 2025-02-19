@@ -3,7 +3,7 @@ include(${PROJECT_SOURCE_DIR}/cmake/common.cmake)
 add_executable(demo
   main.cpp
   Renderer.cpp
-  DemoDebugRenderer.cpp
+  EnvironmentManager.cpp
   WorldRenderer.cpp
   App.cpp
 )

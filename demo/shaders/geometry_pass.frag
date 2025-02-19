@@ -11,6 +11,16 @@ layout(set = 1, binding = 0) uniform sampler2D texAlbedo;
 layout(set = 1, binding = 1) uniform sampler2D texMetalnessRoughness;
 layout(set = 1, binding = 2) uniform sampler2D texNorm;
 layout(set = 1, binding = 3) uniform sampler2D texEmissive;
+
+layout(push_constant) uniform params_t
+{
+  mat4 model;
+  mat3 normalMatrix;
+
+  vec3 albedo;
+  float metalness;
+  float roughness;
+} params;
 //==================================================================================================
 
 //==================================================================================================
@@ -47,10 +57,12 @@ void main()
 
   /* Albedo */
   out_albedoEmissiveR = vec4(texture(texAlbedo, vertex.texCoord).rgb, emissive.r);
+  out_albedoEmissiveR.rgb *= params.albedo;
 
   /* Metalness & Roughness */
   out_metalnessRoughnessEmissiveGB =
     vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, emissive.gb);
+  out_metalnessRoughnessEmissiveGB.xy *= vec2(params.metalness, params.roughness);
 
   /* Normal */
   vec3 norm = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);

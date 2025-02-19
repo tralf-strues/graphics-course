@@ -41,15 +41,16 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  mainCam.lookAt({0.0f, 2.0f, 2.0f}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
+  mainCam.lookAt({0.0f, 3.5f, 5.0f}, {0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
 
   dirLight.radiance = glm::vec3(1.0f) * 3.0f;
   dirLight.direction = normalize(glm::vec3(-1.0f, -10.0f, -8.0f));
 
   pointLights.resize(5);
 
-  renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/white_sphere/white_sphere.gltf");
+  // renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/white_sphere/white_sphere.gltf");
   // renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/DamagedHelmet/DamagedHelmet.gltf");
+  renderer->loadScene(GRAPHICS_COURSE_RESOURCES_ROOT "/scenes/DemoScene/demo_scene.gltf");
 }
 
 void App::run()
@@ -139,7 +140,16 @@ void App::drawFrame()
 
 void App::onGuiFrame()
 {
-  ImGui::SeparatorText("Application");
+  if (ImGui::CollapsingHeader("Application", ImGuiTreeNodeFlags_DefaultOpen))
+  {
+    ImGui::Text(
+      "Application average %.3f ms/frame (%.1f FPS)",
+      1000.0f / ImGui::GetIO().Framerate,
+      ImGui::GetIO().Framerate);
+
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Press 'B' to recompile and reload shaders");
+    ImGui::NewLine();
+  }
 }
 
 void App::moveCam(Camera& cam, const Keyboard& kb, float dt)

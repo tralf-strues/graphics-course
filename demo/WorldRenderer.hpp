@@ -12,6 +12,7 @@
 #include "wsi/Keyboard.hpp"
 
 #include "FramePacket.hpp"
+#include "EnvironmentManager.hpp"
 
 
 /**
@@ -61,10 +62,16 @@ private:
 
   std::unique_ptr<SceneManager> sceneMgr;
 
-  etna::Sampler linearSampler;
+  etna::Sampler linearSamplerRepeat;
+  etna::Sampler linearSamplerClampToEdge;
   etna::Sampler pointSampler;
 
   glm::uvec2 resolution;
+
+  /* Environment */
+  EnvironmentManager environmentManager;
+  int32_t environmentIdx = 2;
+  int32_t renderEnvironmentMip = 0;
 
   /* Shadow Pass */
   etna::GraphicsPipeline shadowPassPipeline;
@@ -95,7 +102,17 @@ private:
     float proj23;
     float invProj00;
     float invProj11;
+
+    uint32_t envMapMips;
+    shader_bool enableEmission;
+    shader_bool enableDiffuseIBL;
+    shader_bool enableSpecularIBL;
+    shader_bool enableDirectionalLight;
+    shader_bool enablePointLights;
   } pushConstDeferredPass;
+
+  /* Forward Pass */
+  etna::GraphicsPipeline renderCubemapPipeline;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;
