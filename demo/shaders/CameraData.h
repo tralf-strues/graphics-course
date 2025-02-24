@@ -20,6 +20,8 @@ struct CameraData
 
   shader_vec3 wsForward;
   float _pad3;
+
+  shader_vec2 jitter;
 };
 
 #endif // CAMERA_DATA_H_INCLUDED

@@ -59,6 +59,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   environmentManager.allocateResources();
+  taaPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
 
   /* Shadow Pass */
   shadowCameraData = ctx.createBuffer(etna::Buffer::CreateInfo{
@@ -78,12 +79,17 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   /* Geometry Pass */
-  cameraData = ctx.createBuffer(etna::Buffer::CreateInfo{
-    .size = sizeof(CameraData),
-    .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
-    .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-    .name = "cameraData"});
-  cameraData.map();
+  for (size_t i = 0; i < cameraData.size(); ++i)
+  {
+    cameraData[i] = ctx.createBuffer(etna::Buffer::CreateInfo{
+      .size = sizeof(CameraData),
+      .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
+      .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+      .name = "cameraData[" + std::to_string(i) + "]",
+    });
+
+    cameraData[i].map();
+  }
 
   depth = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
@@ -115,14 +121,6 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   /* Deferred Pass */
-  deferredTarget = ctx.createImage(etna::Image::CreateInfo{
-    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "deferredTarget",
-    .format = vk::Format::eR8G8B8A8Unorm,
-    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferSrc |
-      vk::ImageUsageFlagBits::eStorage,
-  });
-
   lightData = ctx.createBuffer(etna::Buffer::CreateInfo{
     .size = sizeof(DirectionalLight) + sizeof(uint32_t) + MAX_POINT_LIGHTS * sizeof(PointLight),
     .bufferUsage = vk::BufferUsageFlagBits::eStorageBuffer,
@@ -157,6 +155,7 @@ void WorldRenderer::loadShaders()
     "render_cubemap", {DEMO_SHADERS_ROOT "cubemap.vert.spv", DEMO_SHADERS_ROOT "cubemap.frag.spv"});
 
   environmentManager.loadShaders();
+  taaPass.loadShaders();
 }
 
 void WorldRenderer::setupPipelines(vk::Format swapchain_format)
@@ -213,7 +212,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
         },
       .blendingConfig =
         {
-          .attachments = {BLEND_STATE, BLEND_STATE, BLEND_STATE},
+          .attachments = {BLEND_STATE, BLEND_STATE, BLEND_STATE, BLEND_STATE},
           .logicOpEnable = false,
           .logicOp = vk::LogicOp::eAnd,
         },
@@ -224,6 +223,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
               GBUFFER_ALBEDO_FORMAT,
               GBUFFER_METALNESS_ROUGHNESS_FORMAT,
               GBUFFER_NORM_FORMAT,
+              vk::Format::eR16G16Sfloat,
             },
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
@@ -265,6 +265,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
     });
 
   environmentManager.setupPipelines();
+  taaPass.setupPipelines();
 }
 
 void WorldRenderer::debugInput(const Keyboard& kb)
@@ -274,9 +275,6 @@ void WorldRenderer::debugInput(const Keyboard& kb)
     debugPreviewMode =
       static_cast<DebugPreviewMode>((debugPreviewMode + 1U) % DebugPreviewModeCount);
   }
-
-  // if (kb[KeyboardKey::kP] == ButtonState::Falling)
-  //   lightProps.usePerspectiveM = !lightProps.usePerspectiveM;
 }
 
 void WorldRenderer::update(const FramePacket& packet)
@@ -318,26 +316,37 @@ void WorldRenderer::update(const FramePacket& packet)
   // calc main view camera
   {
     const float aspect = float(resolution.x) / float(resolution.y);
+    const auto jitter = taaPass.getJitter();
 
-    const auto proj = packet.mainCam.projTm(aspect);
+    auto proj = packet.mainCam.projTm(aspect);
+    proj = proj * glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f));
 
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.proj = proj;
     mainCamera.projView = proj * mainCamera.view;
     mainCamera.wsPos = packet.mainCam.position;
+    mainCamera.wsForward = packet.mainCam.forward();
+    mainCamera.wsRight = packet.mainCam.right();
+    mainCamera.wsUp = packet.mainCam.up();
+    mainCamera.jitter = jitter;
+    std::memcpy(getCurrCameraData().data(), &mainCamera, sizeof(mainCamera));
 
     pushConstDeferredPass.proj22 = proj[2][2];
     pushConstDeferredPass.proj23 = proj[3][2];
     pushConstDeferredPass.invProj00 = 1.0f / proj[0][0];
     pushConstDeferredPass.invProj11 = 1.0f / proj[1][1];
-
-    mainCamera.wsForward = packet.mainCam.forward();
-    mainCamera.wsRight = packet.mainCam.right();
-    mainCamera.wsUp = packet.mainCam.up();
-
-    std::memcpy(cameraData.data(), &mainCamera, sizeof(mainCamera));
   }
+}
+
+etna::Buffer& WorldRenderer::getPrevCameraData()
+{
+  return cameraData[(curCameraDataIdx + 1) % cameraData.size()];
+}
+
+etna::Buffer& WorldRenderer::getCurrCameraData()
+{
+  return cameraData[curCameraDataIdx];
 }
 
 void WorldRenderer::renderScene(
@@ -370,14 +379,16 @@ void WorldRenderer::renderScene(
       // basically just for the simplicity of usage.
       struct PushConstant
       {
-        glm::mat4x4 model;
+        glm::mat4x4 prevModel;
+        glm::mat4x4 currModel;
         glm::mat3x4 normalMatrix;
 
         glm::vec3 albedo;
         float metalness;
         float roughness;
       } pushConst {
-        .model = instanceMatrices[instIdx],
+        .prevModel = instanceMatrices[instIdx],
+        .currModel = instanceMatrices[instIdx],
         .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
         .albedo = relem.material->albedo,
         .metalness = relem.material->metalness,
@@ -451,6 +462,7 @@ void WorldRenderer::renderWorld(
       cmd_buf,
       {
         etna::Binding{0, shadowCameraData.genBinding()},
+        etna::Binding{1, shadowCameraData.genBinding()},
       });
 
     etna::RenderTargetState renderTargets(
@@ -479,7 +491,8 @@ void WorldRenderer::renderWorld(
       geometryPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.genBinding()},
+        etna::Binding{0, getPrevCameraData().genBinding()},
+        etna::Binding{1, getCurrCameraData().genBinding()},
       });
 
     etna::RenderTargetState renderTargets(
@@ -502,6 +515,11 @@ void WorldRenderer::renderWorld(
           .view = gBufferNorm.getView({}),
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         },
+        {
+          .image = taaPass.getMotionVectors().get(),
+          .view = taaPass.getMotionVectors().getView({}),
+          .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
+        },
       },
 
       {.image = depth.get(), .view = depth.getView({})});
@@ -516,6 +534,8 @@ void WorldRenderer::renderWorld(
 
     renderScene(cmd_buf, geometryPassInfo, true);
   }
+
+  auto& deferredTarget = taaPass.getTarget();
 
   // Deferred Pass
   {
@@ -577,7 +597,7 @@ void WorldRenderer::renderWorld(
       deferredPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.genBinding()},
+        etna::Binding{0, getCurrCameraData().genBinding()},
       });
 
     auto resourceSet = etna::create_descriptor_set(
@@ -640,6 +660,8 @@ void WorldRenderer::renderWorld(
 
     cmd_buf.dispatch((resolution.x + 15) / 16, (resolution.y + 15) / 16, 1);
   }
+
+  taaPass.resolve(cmd_buf);
 
   // Blit from target to swapchain image
   {
@@ -758,7 +780,7 @@ void WorldRenderer::renderWorld(
       renderCubemapInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.genBinding()},
+        etna::Binding{0, getCurrCameraData().genBinding()},
       });
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, renderCubemapPipeline.getVkPipeline());
@@ -802,6 +824,8 @@ void WorldRenderer::renderWorld(
         cmd_buf, target_image, target_image_view, *debugPreviewTexture, linearSamplerClampToEdge);
     }
   }
+
+  curCameraDataIdx = (curCameraDataIdx + 1) % cameraData.size();
 }
 
 void WorldRenderer::drawGui()

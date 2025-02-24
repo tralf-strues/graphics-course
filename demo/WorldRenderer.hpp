@@ -13,6 +13,7 @@
 
 #include "FramePacket.hpp"
 #include "EnvironmentManager.hpp"
+#include "TAAPass.hpp"
 
 
 /**
@@ -38,6 +39,9 @@ public:
 
 private:
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
+
+  etna::Buffer& getPrevCameraData();
+  etna::Buffer& getCurrCameraData();
 
 private:
   enum DebugPreviewMode : uint32_t {
@@ -82,7 +86,9 @@ private:
   /* Geometry Pass */
   etna::GraphicsPipeline geometryPassPipeline;
 
-  etna::Buffer cameraData;
+  size_t curCameraDataIdx = 0;
+  std::array<etna::Buffer, 2> cameraData;
+
   etna::Image depth;
   etna::Image gBufferAlbedo;
   etna::Image gBufferMetalnessRoughness;
@@ -92,7 +98,6 @@ private:
   etna::ComputePipeline deferredPassPipeline;
 
   etna::Buffer lightData;
-  etna::Image deferredTarget;
 
   struct PushConstantDeferredPass {
     glm::uvec2 resolution;
@@ -113,6 +118,9 @@ private:
 
   /* Forward Pass */
   etna::GraphicsPipeline renderCubemapPipeline;
+
+  /* TAA */
+  TAAPass taaPass;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;
