@@ -3,9 +3,14 @@
 #extension GL_GOOGLE_include_directive : require
 #extension GL_EXT_scalar_block_layout : enable
 
-layout(set = 0, binding = 0) uniform sampler2D texHistory;
-layout(set = 0, binding = 1) uniform sampler2D texMotionVectors;
-layout(set = 0, binding = 2, rgba8) uniform image2D imgCurrentFrame;
+const int GROUP_SIZE         = 32;
+const int SAMPLE_BORDER      = 1;
+const int SAMPLE_WINDOW_SIZE = GROUP_SIZE + 2 * SAMPLE_BORDER;
+
+layout(set = 0, binding = 0) uniform sampler2D texMotionVectors;
+layout(set = 0, binding = 1) uniform sampler2D texHistory;
+layout(set = 0, binding = 2) uniform sampler2D texCurrent;
+layout(set = 0, binding = 3, rgba8) uniform image2D imgOutput;
 
 layout(push_constant) uniform params_t
 {
@@ -13,7 +18,9 @@ layout(push_constant) uniform params_t
   vec2 invResolution;
 } params;
 
-layout(local_size_x = 32, local_size_y = 32, local_size_z = 1) in;
+shared vec3 sharedCurrentSamples[SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE];
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
 void main()
 {
   uvec2 coord = gl_GlobalInvocationID.xy;
@@ -23,14 +30,45 @@ void main()
   }
 
   vec2 uv = (vec2(coord) + 0.5f) * params.invResolution;
-  uv.y = 1.0f - uv.y;
-  uv = 2.0f * uv - 1.0f;
 
-  vec2 motionVector = texture(texMotionVectors, uv).xy;
+  vec2 motionVector = texelFetch(texMotionVectors, ivec2(coord), 0).xy;
+  vec3 historyColor = texture(texHistory, uv - motionVector).rgb;
 
-  vec4 currentValue = imageLoad(imgCurrentFrame, ivec2(coord));
-  vec4 historyValue = texture(texHistory, uv - motionVector);
+  /* Load samples of current texture for color clamping */
+  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - SAMPLE_BORDER;
 
-  vec4 resultValue = mix(currentValue, historyValue, 0.9f);
-  imageStore(imgCurrentFrame, ivec2(coord), resultValue);
+  int threadIdx = int(gl_LocalInvocationIndex);
+  for (int idx = threadIdx; idx < SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE; idx + GROUP_SIZE * GROUP_SIZE)
+  {
+    ivec2 sampleCoord = sampleWindowUpperLeftCoord + ivec2(idx % SAMPLE_WINDOW_SIZE, idx / SAMPLE_WINDOW_SIZE);
+    sampleCoord = clamp(sampleCoord, ivec2(0), ivec2(params.resolution));
+    sharedCurrentSamples[idx] = texelFetch(texCurrent, ivec2(sampleCoord), 0).rgb;
+  }
+
+  barrier();
+
+  ivec2 localCoord = ivec2(gl_LocalInvocationID.xy) - SAMPLE_BORDER;
+  int localIdx = localCoord.y * SAMPLE_WINDOW_SIZE + localCoord.x;
+  vec3 currentColor = sharedCurrentSamples[localIdx];
+
+  /* Color clamping */
+  vec3 minColor = vec3(9999.0f);
+  vec3 maxColor = vec3(-9999.0f);
+  for (int x = -SAMPLE_BORDER; x <= SAMPLE_BORDER; ++x)
+  {
+    for (int y = -SAMPLE_BORDER; y <= SAMPLE_BORDER; ++y)
+    {
+      ivec2 localCoord = ivec2(gl_LocalInvocationID.xy) + ivec2(x, y) - SAMPLE_BORDER;
+      int idx = localCoord.y * SAMPLE_WINDOW_SIZE + localCoord.x;
+
+      minColor = min(minColor, sharedCurrentSamples[idx]);
+      maxColor = max(maxColor, sharedCurrentSamples[idx]);
+    }
+  }
+
+  historyColor = clamp(historyColor, minColor, maxColor);
+
+  /* Resolve */
+  vec3 resultColor = mix(currentColor, historyColor, 0.9f);
+  imageStore(imgOutput, ivec2(coord), vec4(resultColor, 1.0f));
 }

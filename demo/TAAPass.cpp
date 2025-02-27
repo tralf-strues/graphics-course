@@ -28,9 +28,9 @@ void TAAPass::loadShaders()
   etna::create_program("taa_resolve", {DEMO_SHADERS_ROOT "taa_resolve.comp.spv"});
 }
 
-void TAAPass::allocateResources(glm::uvec2 resolution, vk::Format format)
+void TAAPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
 {
-  this->resolution = resolution;
+  resolution = target_resolution;
 
   auto& ctx = etna::get_context();
 
@@ -86,7 +86,7 @@ etna::Image& TAAPass::getMotionVectors()
 
 glm::vec2 TAAPass::getJitter()
 {
-  return 2.0f * (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
+  return (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
 }
 
 void TAAPass::resolve(vk::CommandBuffer cmd_buf)
@@ -156,7 +156,7 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
   cmd_buf.pushConstants<PushConstant>(
     programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {pushConst});
 
-  cmd_buf.dispatch((resolution.x + 31) / 32, (resolution.y + 31) / 32, 6);
+  cmd_buf.dispatch((resolution.x + 31) / 32, (resolution.y + 31) / 32, 1);
 
   curTargetIdx = (curTargetIdx + 1) % 2;
   curJitterIdx = (curJitterIdx + 1) % 16;

@@ -11,7 +11,7 @@ class TAAPass
 {
 public:
   void loadShaders();
-  void allocateResources(glm::uvec2 resolution, vk::Format format);
+  void allocateResources(glm::uvec2 target_resolution, vk::Format format);
   void setupPipelines();
 
   etna::Image& getTarget();

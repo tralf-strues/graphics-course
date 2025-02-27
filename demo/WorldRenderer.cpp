@@ -259,7 +259,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
 
       .fragmentShaderOutput =
         {
-          .colorAttachmentFormats = {swapchain_format},
+          .colorAttachmentFormats = {vk::Format::eR8G8B8A8Unorm},
           .depthAttachmentFormat = vk::Format::eD32Sfloat,
         },
     });
@@ -319,7 +319,7 @@ void WorldRenderer::update(const FramePacket& packet)
     const auto jitter = taaPass.getJitter();
 
     auto proj = packet.mainCam.projTm(aspect);
-    proj = proj * glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f));
+    proj = glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f)) * proj;
 
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
@@ -661,6 +661,87 @@ void WorldRenderer::renderWorld(
     cmd_buf.dispatch((resolution.x + 15) / 16, (resolution.y + 15) / 16, 1);
   }
 
+  // Forward Pass
+  {
+    ETNA_PROFILE_GPU(cmd_buf, forwardPass);
+
+    auto renderCubemapInfo = etna::get_shader_program("render_cubemap");
+    auto cubemapSet = etna::create_descriptor_set(
+      renderCubemapInfo.getDescriptorLayoutId(1),
+      cmd_buf,
+      {
+        etna::Binding{
+          0,
+          environment.prefilteredEnvMap.genBinding(
+            linearSamplerRepeat.get(),
+            vk::ImageLayout::eShaderReadOnlyOptimal,
+            etna::Image::ViewParams{
+              static_cast<uint32_t>(renderEnvironmentMip),
+              1,
+              0,
+              vk::RemainingArrayLayers,
+              {},
+              vk::ImageViewType::eCube,
+            })},
+      });
+
+    etna::set_state(
+      cmd_buf,
+      deferredTarget.get(),
+      vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+      vk::AccessFlagBits2::eColorAttachmentRead |
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+      vk::ImageLayout::eColorAttachmentOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmd_buf,
+      depth.get(),
+      vk::PipelineStageFlagBits2::eEarlyFragmentTests,
+      vk::AccessFlagBits2::eDepthStencilAttachmentRead |
+        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+      vk::ImageLayout::eDepthStencilAttachmentOptimal,
+      vk::ImageAspectFlagBits::eDepth);
+
+    etna::flush_barriers(cmd_buf);
+
+    etna::RenderTargetState renderTargets(
+      cmd_buf,
+      {{0, 0}, {resolution.x, resolution.y}},
+
+      {{
+        .image = deferredTarget.get(),
+        .view = deferredTarget.getView({}),
+        .loadOp = vk::AttachmentLoadOp::eLoad,
+      }},
+
+      {
+        .image = depth.get(),
+        .view = depth.getView({}),
+        .loadOp = vk::AttachmentLoadOp::eLoad,
+      });
+
+    auto cameraSet = etna::create_descriptor_set(
+      renderCubemapInfo.getDescriptorLayoutId(0),
+      cmd_buf,
+      {
+        etna::Binding{0, getCurrCameraData().genBinding()},
+      });
+
+    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, renderCubemapPipeline.getVkPipeline());
+    cmd_buf.bindDescriptorSets(
+      vk::PipelineBindPoint::eGraphics,
+      renderCubemapPipeline.getVkPipelineLayout(),
+      0,
+      {
+        cameraSet.getVkSet(),
+        cubemapSet.getVkSet(),
+      },
+      {});
+
+    cmd_buf.draw(36, 1, 0, 0);
+  }
+
   taaPass.resolve(cmd_buf);
 
   // Blit from target to swapchain image
@@ -723,78 +804,6 @@ void WorldRenderer::renderWorld(
       vk::ImageAspectFlagBits::eColor);
 
     etna::flush_barriers(cmd_buf);
-  }
-
-  // Forward Pass
-  {
-    ETNA_PROFILE_GPU(cmd_buf, forwardPass);
-
-    auto renderCubemapInfo = etna::get_shader_program("render_cubemap");
-    auto cubemapSet = etna::create_descriptor_set(
-      renderCubemapInfo.getDescriptorLayoutId(1),
-      cmd_buf,
-      {
-        etna::Binding{
-          0,
-          environment.prefilteredEnvMap.genBinding(
-            linearSamplerRepeat.get(),
-            vk::ImageLayout::eShaderReadOnlyOptimal,
-            etna::Image::ViewParams{
-              static_cast<uint32_t>(renderEnvironmentMip),
-              1,
-              0,
-              vk::RemainingArrayLayers,
-              {},
-              vk::ImageViewType::eCube,
-            })},
-      });
-
-    etna::set_state(
-      cmd_buf,
-      depth.get(),
-      vk::PipelineStageFlagBits2::eEarlyFragmentTests,
-      vk::AccessFlagBits2::eDepthStencilAttachmentRead |
-        vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-      vk::ImageLayout::eDepthStencilAttachmentOptimal,
-      vk::ImageAspectFlagBits::eDepth);
-
-    etna::flush_barriers(cmd_buf);
-
-    etna::RenderTargetState renderTargets(
-      cmd_buf,
-      {{0, 0}, {resolution.x, resolution.y}},
-
-      {{
-        .image = target_image,
-        .view = target_image_view,
-        .loadOp = vk::AttachmentLoadOp::eLoad,
-      }},
-
-      {
-        .image = depth.get(),
-        .view = depth.getView({}),
-        .loadOp = vk::AttachmentLoadOp::eLoad,
-      });
-
-    auto cameraSet = etna::create_descriptor_set(
-      renderCubemapInfo.getDescriptorLayoutId(0),
-      cmd_buf,
-      {
-        etna::Binding{0, getCurrCameraData().genBinding()},
-      });
-
-    cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, renderCubemapPipeline.getVkPipeline());
-    cmd_buf.bindDescriptorSets(
-      vk::PipelineBindPoint::eGraphics,
-      renderCubemapPipeline.getVkPipelineLayout(),
-      0,
-      {
-        cameraSet.getVkSet(),
-        cubemapSet.getVkSet(),
-      },
-      {});
-
-    cmd_buf.draw(36, 1, 0, 0);
   }
 
   // Debug Preview Pass
