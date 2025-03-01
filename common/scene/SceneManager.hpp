@@ -54,6 +54,7 @@ public:
   // NOTE: maybe you can pass some additional data through unused matrix entries?
   std::span<const glm::mat4x4> getInstanceMatrices() { return instanceMatrices; }
   std::span<const std::uint32_t> getInstanceMeshes() { return instanceMeshes; }
+  std::span<const std::string> getInstanceNames() { return instanceNames; }
 
   // Every mesh is a collection of relems
   std::span<const Mesh> getMeshes() { return meshes; }
@@ -84,6 +85,7 @@ private:
   {
     std::vector<glm::mat4x4> matrices;
     std::vector<std::uint32_t> meshes;
+    std::vector<std::string> names;
   };
   ProcessedInstances processInstances(const tinygltf::Model& model) const;
 
@@ -119,6 +121,7 @@ private:
   std::vector<Mesh> meshes;
   std::vector<glm::mat4x4> instanceMatrices;
   std::vector<std::uint32_t> instanceMeshes;
+  std::vector<std::string> instanceNames;
 
   etna::Buffer unifiedVbuf;
   etna::Buffer unifiedIbuf;

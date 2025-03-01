@@ -43,7 +43,7 @@ App::App()
 
   mainCam.lookAt({0.0f, 3.5f, 5.0f}, {0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
 
-  dirLight.radiance = glm::vec3(1.0f) * 3.0f;
+  dirLight.radiance = glm::vec3(1.0f) * 1.5f;
   dirLight.direction = normalize(glm::vec3(-1.0f, -10.0f, -8.0f));
 
   pointLights.resize(5);
@@ -78,7 +78,7 @@ void App::run()
       light.radiance = glm::vec3(1.0f, 0.6f, 0.3f) * 2.0f;
       light.radius = 7.0f;
       light.position.x = 3.0f * std::cos(alpha);
-      light.position.y = 0.0f;
+      light.position.y = 1.0f;
       light.position.z = 3.0f * std::sin(alpha);
     }
 

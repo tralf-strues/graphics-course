@@ -43,6 +43,9 @@ private:
   etna::Buffer& getPrevCameraData();
   etna::Buffer& getCurrCameraData();
 
+  std::vector<glm::mat4x4>& getPrevTransforms();
+  std::vector<glm::mat4x4>& getCurrTransforms();
+
 private:
   enum DebugPreviewMode : uint32_t {
     DebugPreviewDisabled,
@@ -63,6 +66,9 @@ private:
   // instead of just mapping the buffer... could get quite large in the future, and not
   // all of us have amd gpus :)
   constexpr static uint32_t MAX_POINT_LIGHTS = 32U;
+
+  template<typename T, size_t N = 2>
+  using Temporal = std::array<T, N>;
 
   std::unique_ptr<SceneManager> sceneMgr;
 
@@ -87,7 +93,10 @@ private:
   etna::GraphicsPipeline geometryPassPipeline;
 
   size_t curCameraDataIdx = 0;
-  std::array<etna::Buffer, 2> cameraData;
+  Temporal<etna::Buffer> cameraData;
+
+  size_t curTransformFrameIdx = 0;
+  Temporal<std::vector<glm::mat4x4>> transforms;
 
   etna::Image depth;
   etna::Image gBufferAlbedo;
@@ -121,6 +130,7 @@ private:
 
   /* TAA */
   TAAPass taaPass;
+  bool enableTAA = true;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;

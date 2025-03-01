@@ -5,7 +5,7 @@
 
 
 static constexpr std::array HALTON_SEQUENCE = {
-  glm::vec2(0.500000f, 0.333333f),
+  glm::vec2(0.510000f, 0.333333f),
   glm::vec2(0.250000f, 0.666667f),
   glm::vec2(0.750000f, 0.111111f),
   glm::vec2(0.125000f, 0.444444f),
@@ -44,7 +44,7 @@ void TAAPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
 
   pointSampler = etna::Sampler(etna::Sampler::CreateInfo{
     .filter = vk::Filter::eNearest,
-    .addressMode = vk::SamplerAddressMode::eRepeat,
+    .addressMode = vk::SamplerAddressMode::eClampToEdge,
     .name = "TAAPass::pointSampler",
     .minLod = 0.0f,
     .maxLod = 0.0f,
@@ -57,14 +57,22 @@ void TAAPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
     .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
 
-  for (size_t i = 0; i < targets.size(); ++i)
+  currentTarget = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+    .name = "TAAPass::currentTarget",
+    .format = format,
+    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eStorage |
+      vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
+  });
+
+  for (size_t i = 0; i < temporalTargets.size(); ++i)
   {
-    targets[i] = ctx.createImage(etna::Image::CreateInfo{
+    temporalTargets[i] = ctx.createImage(etna::Image::CreateInfo{
       .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-      .name = "TAAPass::targets[" + std::to_string(i) + "]",
+      .name = "TAAPass::temporalTargets[" + std::to_string(i) + "]",
       .format = format,
-      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
-        vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc,
+      .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
+        vk::ImageUsageFlagBits::eTransferSrc,
     });
   }
 }
@@ -74,9 +82,14 @@ void TAAPass::setupPipelines()
   pipeline = etna::get_context().getPipelineManager().createComputePipeline("taa_resolve", {});
 }
 
-etna::Image& TAAPass::getTarget()
+etna::Image& TAAPass::getCurrentTarget()
 {
-  return targets[curTargetIdx];
+  return currentTarget;
+}
+
+etna::Image& TAAPass::getResolveTarget()
+{
+  return temporalTargets[(curTemporalIdx + RESOLVE_IDX) % temporalTargets.size()];
 }
 
 etna::Image& TAAPass::getMotionVectors()
@@ -86,19 +99,11 @@ etna::Image& TAAPass::getMotionVectors()
 
 glm::vec2 TAAPass::getJitter()
 {
-  return (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
+  return 0.8f * (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
 }
 
 void TAAPass::resolve(vk::CommandBuffer cmd_buf)
 {
-  etna::set_state(
-    cmd_buf,
-    getHistory().get(),
-    vk::PipelineStageFlagBits2::eComputeShader,
-    vk::AccessFlagBits2::eShaderSampledRead,
-    vk::ImageLayout::eShaderReadOnlyOptimal,
-    vk::ImageAspectFlagBits::eColor);
-
   etna::set_state(
     cmd_buf,
     getMotionVectors().get(),
@@ -109,9 +114,25 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
 
   etna::set_state(
     cmd_buf,
-    getTarget().get(),
+    getHistory().get(),
     vk::PipelineStageFlagBits2::eComputeShader,
-    vk::AccessFlagBits2::eShaderStorageRead | vk::AccessFlagBits2::eShaderStorageWrite,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+      cmd_buf,
+      getCurrentTarget().get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+    cmd_buf,
+    getResolveTarget().get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderStorageWrite,
     vk::ImageLayout::eGeneral,
     vk::ImageAspectFlagBits::eColor);
 
@@ -124,16 +145,23 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
     {
       etna::Binding(
         0,
-        getHistory().genBinding(
-          linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
-
-      etna::Binding(
-        1,
         getMotionVectors().genBinding(
           pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
 
       etna::Binding(
-        2, getTarget().genBinding(nullptr, vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
+        1,
+        getHistory().genBinding(
+          linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
+
+      etna::Binding(
+        2,
+        getCurrentTarget().genBinding(
+          pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
+
+      etna::Binding(
+        3,
+        getResolveTarget().genBinding(
+          nullptr, vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
     });
 
   cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline.getVkPipeline());
@@ -156,13 +184,14 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
   cmd_buf.pushConstants<PushConstant>(
     programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {pushConst});
 
-  cmd_buf.dispatch((resolution.x + 31) / 32, (resolution.y + 31) / 32, 1);
+  cmd_buf.dispatch(
+    (resolution.x + GROUP_SIZE - 1) / GROUP_SIZE, (resolution.y + GROUP_SIZE - 1) / GROUP_SIZE, 1);
 
-  curTargetIdx = (curTargetIdx + 1) % 2;
-  curJitterIdx = (curJitterIdx + 1) % 16;
+  curTemporalIdx = (curTemporalIdx + 1) % temporalTargets.size();
+  curJitterIdx = (curJitterIdx + 1) % HALTON_SEQUENCE.size();
 }
 
 etna::Image& TAAPass::getHistory()
 {
-  return targets[(curTargetIdx + 1) % 2];
+  return temporalTargets[(curTemporalIdx + HISTORY_IDX) % temporalTargets.size()];
 }

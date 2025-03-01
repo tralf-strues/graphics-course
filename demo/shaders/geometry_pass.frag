@@ -92,7 +92,7 @@ void main()
 
   vec2 motionVectorUV = 0.5f * (prevPosNDC - currPosNDC);
   motionVectorUV -= prevCamera.jitter;
-  motionVectorUV -= currCamera.jitter;
+  motionVectorUV += currCamera.jitter;
 
   out_motionVectors = motionVectorUV;
 }

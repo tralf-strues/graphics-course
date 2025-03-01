@@ -139,6 +139,10 @@ void WorldRenderer::loadScene(std::filesystem::path path)
   {
     environmentManager.loadEnvironment(envPath);
   }
+
+  auto instancesCount = sceneMgr->getInstanceMatrices().size();
+  getPrevTransforms().resize(instancesCount);
+  getCurrTransforms().resize(instancesCount);
 }
 
 void WorldRenderer::loadShaders()
@@ -319,7 +323,11 @@ void WorldRenderer::update(const FramePacket& packet)
     const auto jitter = taaPass.getJitter();
 
     auto proj = packet.mainCam.projTm(aspect);
-    proj = glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f)) * proj;
+
+    if (enableTAA)
+    {
+      proj = glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f)) * proj;
+    }
 
     CameraData mainCamera;
     mainCamera.view = packet.mainCam.viewTm();
@@ -337,6 +345,34 @@ void WorldRenderer::update(const FramePacket& packet)
     pushConstDeferredPass.invProj00 = 1.0f / proj[0][0];
     pushConstDeferredPass.invProj11 = 1.0f / proj[1][1];
   }
+
+  // update transforms
+  {
+    auto originalMatrices = sceneMgr->getInstanceMatrices();
+    auto& currTransforms = getCurrTransforms();
+    std::copy(originalMatrices.begin(), originalMatrices.end(), currTransforms.begin());
+
+    for (size_t instIdx = 0; instIdx < originalMatrices.size(); ++instIdx)
+    {
+      float sign = (instIdx % 2) == 0 ? 1.0f : -1.0f;
+
+      if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Side") != std::string::npos)
+      {
+        currTransforms[instIdx] = glm::translate(
+          glm::identity<glm::mat4>(),
+          glm::vec3(0.0f, 0.75f * sign * cos(4.0f * packet.currentTime), 0.0f));
+      }
+      else if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Back") != std::string::npos)
+      {
+        currTransforms[instIdx] = glm::translate(
+          glm::identity<glm::mat4>(),
+          glm::vec3(
+            2.0f * sign * cos(5.0f * packet.currentTime),
+            2.0f * sign * sin(2.0f * packet.currentTime),
+            0.0f));
+      }
+    }
+  }
 }
 
 etna::Buffer& WorldRenderer::getPrevCameraData()
@@ -349,6 +385,16 @@ etna::Buffer& WorldRenderer::getCurrCameraData()
   return cameraData[curCameraDataIdx];
 }
 
+std::vector<glm::mat4x4>& WorldRenderer::getPrevTransforms()
+{
+  return transforms[(curTransformFrameIdx + 1) % transforms.size()];
+}
+
+std::vector<glm::mat4x4>& WorldRenderer::getCurrTransforms()
+{
+  return transforms[curTransformFrameIdx];
+}
+
 void WorldRenderer::renderScene(
   vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass)
 {
@@ -359,7 +405,6 @@ void WorldRenderer::renderScene(
   cmd_buf.bindIndexBuffer(sceneMgr->getIndexBuffer(), 0, vk::IndexType::eUint32);
 
   auto instanceMeshes = sceneMgr->getInstanceMeshes();
-  auto instanceMatrices = sceneMgr->getInstanceMatrices();
 
   auto meshes = sceneMgr->getMeshes();
   auto relems = sceneMgr->getRenderElements();
@@ -387,9 +432,9 @@ void WorldRenderer::renderScene(
         float metalness;
         float roughness;
       } pushConst {
-        .prevModel = instanceMatrices[instIdx],
-        .currModel = instanceMatrices[instIdx],
-        .normalMatrix = glm::inverseTranspose(glm::mat3(instanceMatrices[instIdx])),
+        .prevModel = getPrevTransforms()[instIdx],
+        .currModel = getCurrTransforms()[instIdx],
+        .normalMatrix = glm::inverseTranspose(glm::mat3(getCurrTransforms()[instIdx])),
         .albedo = relem.material->albedo,
         .metalness = relem.material->metalness,
         .roughness = relem.material->roughness,
@@ -535,7 +580,7 @@ void WorldRenderer::renderWorld(
     renderScene(cmd_buf, geometryPassInfo, true);
   }
 
-  auto& deferredTarget = taaPass.getTarget();
+  auto& deferredTarget = taaPass.getCurrentTarget();
 
   // Deferred Pass
   {
@@ -744,11 +789,13 @@ void WorldRenderer::renderWorld(
 
   taaPass.resolve(cmd_buf);
 
+  auto& resolveTarget = enableTAA ? taaPass.getResolveTarget() : deferredTarget;
+
   // Blit from target to swapchain image
   {
     etna::set_state(
       cmd_buf,
-      deferredTarget.get(),
+      resolveTarget.get(),
       vk::PipelineStageFlagBits2::eTransfer,
       vk::AccessFlagBits2::eTransferRead,
       vk::ImageLayout::eTransferSrcOptimal,
@@ -788,7 +835,7 @@ void WorldRenderer::renderWorld(
     };
 
     cmd_buf.blitImage(
-      deferredTarget.get(),
+      resolveTarget.get(),
       vk::ImageLayout::eTransferSrcOptimal,
       target_image,
       vk::ImageLayout::eTransferDstOptimal,
@@ -835,12 +882,27 @@ void WorldRenderer::renderWorld(
   }
 
   curCameraDataIdx = (curCameraDataIdx + 1) % cameraData.size();
+  curTransformFrameIdx = (curTransformFrameIdx + 1) % cameraData.size();
 }
 
 void WorldRenderer::drawGui()
 {
+  // if (ImGui::CollapsingHeader("Scene Hierarchy"))
+  // {
+  //   auto instanceNames = sceneMgr->getInstanceNames();
+
+  //   for (size_t i = 0; i < instanceNames.size(); ++i)
+  //   {
+  //     ImGui::Text("%s", instanceNames[i].c_str());
+  //   }
+  // }
+
   if (ImGui::CollapsingHeader("World Renderer", ImGuiTreeNodeFlags_DefaultOpen))
   {
+    ImGui::Checkbox("Enable TAA", &enableTAA);
+
+    ImGui::NewLine();
+
     ImGui::SeparatorText("Environment");
 
     ImGui::Combo(

@@ -118,14 +118,14 @@ SceneManager::ProcessedMaterials SceneManager::processMaterials(const tinygltf::
     mat.name = srcMat.name;
 
     const auto setTexture =
-      [this, &result, &model](std::size_t idx, vk::Format format) -> etna::Image* {
-      if (result.textures[idx].get() == nullptr)
+      [this, &result, &model](std::size_t texture_idx, vk::Format format) -> etna::Image* {
+      std::size_t imageIdx = model.textures[texture_idx].source;
+      if (result.textures[imageIdx].get() == nullptr)
       {
-        result.textures[idx] =
-          this->createAndUploadImage(model.images[idx], format);
+        result.textures[imageIdx] = this->createAndUploadImage(model.images[imageIdx], format);
       }
 
-      return &result.textures[idx];
+      return &result.textures[imageIdx];
     };
 
     mat.texAlbedo = setTexture(pbr.baseColorTexture.index, vk::Format::eR8G8B8A8Srgb);
@@ -210,6 +210,7 @@ SceneManager::ProcessedInstances SceneManager::processInstances(const tinygltf::
         ++totalNodesWithMeshes;
     result.matrices.reserve(totalNodesWithMeshes);
     result.meshes.reserve(totalNodesWithMeshes);
+    result.names.reserve(totalNodesWithMeshes);
   }
 
   for (std::size_t i = 0; i < model.nodes.size(); ++i)
@@ -217,6 +218,7 @@ SceneManager::ProcessedInstances SceneManager::processInstances(const tinygltf::
     {
       result.matrices.push_back(nodeTransforms[i]);
       result.meshes.push_back(model.nodes[i].mesh);
+      result.names.push_back(model.nodes[i].name);
     }
 
   return result;
@@ -478,9 +480,10 @@ void SceneManager::selectScene(std::filesystem::path path)
   materials = std::move(mats);
 
   // NOTE: you might want to store these on the GPU for GPU-driven rendering.
-  auto [instMats, instMeshes] = processInstances(model);
+  auto [instMats, instMeshes, instNames] = processInstances(model);
   instanceMatrices = std::move(instMats);
   instanceMeshes = std::move(instMeshes);
+  instanceNames = std::move(instNames);
 
   auto [verts, inds, relems, meshs] = processMeshes(model);
 
