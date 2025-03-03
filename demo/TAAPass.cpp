@@ -50,13 +50,6 @@ void TAAPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
     .maxLod = 0.0f,
   });
 
-  motionVectors = ctx.createImage(etna::Image::CreateInfo{
-    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "TAAPass::motionVectors",
-    .format = vk::Format::eR16G16Sfloat,
-    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-  });
-
   currentTarget = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "TAAPass::currentTarget",
@@ -65,11 +58,21 @@ void TAAPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
       vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc,
   });
 
-  for (size_t i = 0; i < temporalTargets.size(); ++i)
+  for (size_t i = 0; i < motionVectors.size(); ++i)
   {
-    temporalTargets[i] = ctx.createImage(etna::Image::CreateInfo{
+    motionVectors[i] = ctx.createImage(etna::Image::CreateInfo{
       .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-      .name = "TAAPass::temporalTargets[" + std::to_string(i) + "]",
+      .name = "TAAPass::motionVectors[" + std::to_string(i) + "]",
+      .format = vk::Format::eR16G16Sfloat,
+      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    });
+  }
+
+  for (size_t i = 0; i < resolveTargets.size(); ++i)
+  {
+    resolveTargets[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "TAAPass::resolveTargets[" + std::to_string(i) + "]",
       .format = format,
       .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
         vk::ImageUsageFlagBits::eTransferSrc,
@@ -89,12 +92,12 @@ etna::Image& TAAPass::getCurrentTarget()
 
 etna::Image& TAAPass::getResolveTarget()
 {
-  return temporalTargets[(curTemporalIdx + RESOLVE_IDX) % temporalTargets.size()];
+  return resolveTargets.getCurrent();
 }
 
 etna::Image& TAAPass::getMotionVectors()
 {
-  return motionVectors;
+  return motionVectors.getCurrent();
 }
 
 glm::vec2 TAAPass::getJitter()
@@ -106,7 +109,15 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
 {
   etna::set_state(
     cmd_buf,
-    getMotionVectors().get(),
+    motionVectors.getPrevious().get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+    cmd_buf,
+    motionVectors.getCurrent().get(),
     vk::PipelineStageFlagBits2::eComputeShader,
     vk::AccessFlagBits2::eShaderSampledRead,
     vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -145,21 +156,26 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
     {
       etna::Binding(
         0,
-        getMotionVectors().genBinding(
-          pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
+        motionVectors.getPrevious().genBinding(
+          linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
 
       etna::Binding(
         1,
+        motionVectors.getCurrent().genBinding(
+          pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
+
+      etna::Binding(
+        2,
         getHistory().genBinding(
           linearSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
 
       etna::Binding(
-        2,
+        3,
         getCurrentTarget().genBinding(
           pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
 
       etna::Binding(
-        3,
+        4,
         getResolveTarget().genBinding(
           nullptr, vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
     });
@@ -187,11 +203,12 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
   cmd_buf.dispatch(
     (resolution.x + GROUP_SIZE - 1) / GROUP_SIZE, (resolution.y + GROUP_SIZE - 1) / GROUP_SIZE, 1);
 
-  curTemporalIdx = (curTemporalIdx + 1) % temporalTargets.size();
+  motionVectors.proceed();
+  resolveTargets.proceed();
   curJitterIdx = (curJitterIdx + 1) % HALTON_SEQUENCE.size();
 }
 
 etna::Image& TAAPass::getHistory()
 {
-  return temporalTargets[(curTemporalIdx + HISTORY_IDX) % temporalTargets.size()];
+  return resolveTargets.getPrevious();
 }

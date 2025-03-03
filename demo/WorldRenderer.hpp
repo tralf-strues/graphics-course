@@ -38,6 +38,8 @@ public:
     vk::CommandBuffer cmd_buf, vk::Image target_image, vk::ImageView target_image_view);
 
 private:
+  void recreateMaterialTextureSampler();
+
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
   etna::Buffer& getPrevCameraData();
@@ -75,6 +77,8 @@ private:
   etna::Sampler linearSamplerRepeat;
   etna::Sampler linearSamplerClampToEdge;
   etna::Sampler pointSampler;
+
+  vk::UniqueSampler materialTextureSampler;
 
   glm::uvec2 resolution;
 
@@ -131,6 +135,8 @@ private:
   /* TAA */
   TAAPass taaPass;
   bool enableTAA = true;
+  bool unjitterTextureUVs = true;
+  float materialTextureMipBias = -0.5f;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;

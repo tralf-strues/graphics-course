@@ -32,6 +32,7 @@ layout(push_constant) uniform params_t
   vec3 albedo;
   float metalness;
   float roughness;
+  bool unjitterTextureUVs;
 } params;
 //==================================================================================================
 
@@ -69,21 +70,33 @@ layout(location = 2) out vec4 out_wsNorm;
 layout(location = 3) out vec2 out_motionVectors;
 //==================================================================================================
 
+vec2 UnjitterTextureUV(vec2 uv)
+{
+  if (params.unjitterTextureUVs)
+  {
+    return uv - dFdx(uv) * currCamera.jitterPixels.x + dFdy(uv) * currCamera.jitterPixels.y;
+  }
+
+  return uv;
+}
+
 void main()
 {
-  vec3 emissive = texture(texEmissive, vertex.texCoord).rgb;
+  vec2 texCoord = UnjitterTextureUV(vertex.texCoord);
+
+  vec3 emissive = texture(texEmissive, texCoord).rgb;
 
   /* Albedo */
-  out_albedoEmissiveR = vec4(texture(texAlbedo, vertex.texCoord).rgb, emissive.r);
+  out_albedoEmissiveR = vec4(texture(texAlbedo, texCoord).rgb, emissive.r);
   out_albedoEmissiveR.rgb *= params.albedo;
 
   /* Metalness & Roughness */
   out_metalnessRoughnessEmissiveGB =
-    vec4(texture(texMetalnessRoughness, vertex.texCoord).bg, emissive.gb);
+    vec4(texture(texMetalnessRoughness, texCoord).bg, emissive.gb);
   out_metalnessRoughnessEmissiveGB.xy *= vec2(params.metalness, params.roughness);
 
   /* Normal */
-  vec3 norm = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, vertex.texCoord);
+  vec3 norm = PerturbNormal(texNorm, normalize(vertex.wsNorm), vertex.wsPos, texCoord);
   out_wsNorm = vec4(0.5f * norm + 0.5f, 0.0f);
 
   /* Motion Vectors */
@@ -91,8 +104,8 @@ void main()
   vec2 currPosNDC = vertex.currPosClip.xy / vertex.currPosClip.w;
 
   vec2 motionVectorUV = 0.5f * (prevPosNDC - currPosNDC);
-  motionVectorUV -= prevCamera.jitter;
-  motionVectorUV += currCamera.jitter;
+  motionVectorUV -= prevCamera.jitterUV;
+  motionVectorUV += currCamera.jitterUV;
 
   out_motionVectors = motionVectorUV;
 }

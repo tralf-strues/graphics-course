@@ -34,6 +34,8 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
 
   resolution = swapchain_resolution;
 
+  recreateMaterialTextureSampler();
+
   linearSamplerRepeat = etna::Sampler(etna::Sampler::CreateInfo{
     .filter = vk::Filter::eLinear,
     .addressMode = vk::SamplerAddressMode::eRepeat,
@@ -320,7 +322,7 @@ void WorldRenderer::update(const FramePacket& packet)
   // calc main view camera
   {
     const float aspect = float(resolution.x) / float(resolution.y);
-    const auto jitter = taaPass.getJitter();
+    const auto jitter = enableTAA ? taaPass.getJitter() : glm::vec2(0.0f);
 
     auto proj = packet.mainCam.projTm(aspect);
 
@@ -337,7 +339,8 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();
     mainCamera.wsUp = packet.mainCam.up();
-    mainCamera.jitter = jitter;
+    mainCamera.jitterUV = jitter;
+    mainCamera.jitterPixels = jitter * glm::vec2(resolution);
     std::memcpy(getCurrCameraData().data(), &mainCamera, sizeof(mainCamera));
 
     pushConstDeferredPass.proj22 = proj[2][2];
@@ -395,6 +398,26 @@ std::vector<glm::mat4x4>& WorldRenderer::getCurrTransforms()
   return transforms[curTransformFrameIdx];
 }
 
+void WorldRenderer::recreateMaterialTextureSampler()
+{
+  const vk::SamplerCreateInfo createInfo {
+    .magFilter = vk::Filter::eLinear,
+    .minFilter = vk::Filter::eLinear,
+    .mipmapMode = vk::SamplerMipmapMode::eLinear,
+    .addressModeU = vk::SamplerAddressMode::eRepeat,
+    .addressModeV = vk::SamplerAddressMode::eRepeat,
+    .addressModeW = vk::SamplerAddressMode::eRepeat,
+    .mipLodBias = materialTextureMipBias,
+    .maxAnisotropy = 1.0f,
+    .minLod = 0.0f,
+    .maxLod = vk::LodClampNone,
+    .borderColor = vk::BorderColor::eFloatOpaqueWhite,
+  };
+
+  materialTextureSampler =
+    etna::unwrap_vk_result(etna::get_context().getDevice().createSamplerUnique(createInfo));
+}
+
 void WorldRenderer::renderScene(
   vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass)
 {
@@ -431,6 +454,7 @@ void WorldRenderer::renderScene(
         glm::vec3 albedo;
         float metalness;
         float roughness;
+        shader_bool unjitterTextureUVs;
       } pushConst {
         .prevModel = getPrevTransforms()[instIdx],
         .currModel = getCurrTransforms()[instIdx],
@@ -438,6 +462,7 @@ void WorldRenderer::renderScene(
         .albedo = relem.material->albedo,
         .metalness = relem.material->metalness,
         .roughness = relem.material->roughness,
+        .unjitterTextureUVs = unjitterTextureUVs,
       };
 
       cmd_buf.pushConstants<PushConstant>(
@@ -456,22 +481,22 @@ void WorldRenderer::renderScene(
             etna::Binding{
               0,
               mat.texAlbedo->genBinding(
-                linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
+                materialTextureSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
             },
             etna::Binding{
               1,
               mat.texMetalnessRoughness->genBinding(
-                linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
+                materialTextureSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
             },
             etna::Binding{
               2,
               mat.texNorm->genBinding(
-                linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
+                materialTextureSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
             },
             etna::Binding{
               3,
               mat.texEmissive->genBinding(
-                linearSamplerRepeat.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
+                materialTextureSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal),
             },
           });
 
@@ -887,19 +912,19 @@ void WorldRenderer::renderWorld(
 
 void WorldRenderer::drawGui()
 {
-  // if (ImGui::CollapsingHeader("Scene Hierarchy"))
-  // {
-  //   auto instanceNames = sceneMgr->getInstanceNames();
-
-  //   for (size_t i = 0; i < instanceNames.size(); ++i)
-  //   {
-  //     ImGui::Text("%s", instanceNames[i].c_str());
-  //   }
-  // }
-
   if (ImGui::CollapsingHeader("World Renderer", ImGuiTreeNodeFlags_DefaultOpen))
   {
+    static float newMaterialTextureMipBias = materialTextureMipBias;
+
     ImGui::Checkbox("Enable TAA", &enableTAA);
+    ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
+    ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
+
+    if (newMaterialTextureMipBias != materialTextureMipBias)
+    {
+      materialTextureMipBias = newMaterialTextureMipBias;
+      recreateMaterialTextureSampler();
+    }
 
     ImGui::NewLine();
 

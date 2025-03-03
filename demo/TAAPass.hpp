@@ -6,6 +6,8 @@
 #include <etna/GraphicsPipeline.hpp>
 #include <glm/glm.hpp>
 
+#include "Temporal.hpp"
+
 
 class TAAPass
 {
@@ -22,11 +24,6 @@ public:
   void resolve(vk::CommandBuffer cmd_buf);
 
 private:
-  enum TemporalTargetIndices : size_t {
-    HISTORY_IDX = 0,
-    RESOLVE_IDX = 1,
-  };
-
   static constexpr size_t GROUP_SIZE = 8;
 
 private:
@@ -40,11 +37,10 @@ private:
 
   glm::uvec2 resolution;
 
-  etna::Image motionVectors;
+  Temporal<etna::Image> motionVectors;
 
   etna::Image currentTarget;
-  std::array<etna::Image, 2> temporalTargets;
+  Temporal<etna::Image> resolveTargets;
 
-  size_t curTemporalIdx = 0;
   size_t curJitterIdx = 0;
 };
