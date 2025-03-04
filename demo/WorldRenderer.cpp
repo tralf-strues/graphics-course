@@ -812,7 +812,7 @@ void WorldRenderer::renderWorld(
     cmd_buf.draw(36, 1, 0, 0);
   }
 
-  taaPass.resolve(cmd_buf);
+  taaPass.resolve(cmd_buf, filterHistory);
 
   auto& resolveTarget = enableTAA ? taaPass.getResolveTarget() : deferredTarget;
 
@@ -918,6 +918,7 @@ void WorldRenderer::drawGui()
 
     ImGui::Checkbox("Enable TAA", &enableTAA);
     ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
+    ImGui::Checkbox("Filter History", &filterHistory);
     ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
 
     if (newMaterialTextureMipBias != materialTextureMipBias)

@@ -21,7 +21,7 @@ public:
   etna::Image& getMotionVectors();
   glm::vec2 getJitter();
 
-  void resolve(vk::CommandBuffer cmd_buf);
+  void resolve(vk::CommandBuffer cmd_buf, bool filter_history);
 
 private:
   static constexpr size_t GROUP_SIZE = 8;

@@ -136,6 +136,7 @@ private:
   TAAPass taaPass;
   bool enableTAA = true;
   bool unjitterTextureUVs = true;
+  bool filterHistory = true;
   float materialTextureMipBias = -0.5f;
 
   /* Debug Preview Pass */

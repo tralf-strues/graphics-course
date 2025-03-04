@@ -17,9 +17,53 @@ layout(push_constant) uniform params_t
 {
   uvec2 resolution;
   vec2 invResolution;
+  bool useCatmullRom;
 } params;
 
 shared vec3 sharedCurrentSamples[SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE];
+
+float FilterCubic(float x, float B, float C)
+{
+  float y = 0.0f;
+  float x2 = x * x;
+  float x3 = x * x * x;
+
+  if (x < 1)
+  {
+    y = (12 - 9 * B - 6 * C) * x3 + (-18 + 12 * B + 6 * C) * x2 + (6 - 2 * B);
+  }
+  else if (x <= 2)
+  {
+    y = (-B - 6 * C) * x3 + (6 * B + 30 * C) * x2 + (-12 * B - 48 * C) * x + (8 * B + 24 * C);
+  }
+
+  return y / 6.0f;
+}
+
+vec3 FilteredHistorySampleCatmullRom(vec2 reprojectedUV)
+{
+  vec2 reprojectedPos = reprojectedUV * vec2(params.resolution);
+
+  vec3 sum = vec3(0.0f);
+  float totalWeight = 0.0f;
+
+  for (int ty = -1; ty <= 2; ++ty)
+  {
+    for (int tx = -1; tx <= 2; ++tx)
+    {
+      vec2 samplePos = floor(reprojectedPos + vec2(tx, ty)) + 0.5f;
+      vec3 reprojectedSample = texelFetch(texHistory, ivec2(samplePos), 0).rgb;
+
+      vec2 sampleDist = abs(samplePos - reprojectedPos);
+      float filterWeight = FilterCubic(sampleDist.x, 0.0f, 0.5f) * FilterCubic(sampleDist.y, 0.0f, 0.5f);
+
+      sum += reprojectedSample * filterWeight;
+      totalWeight += filterWeight;
+    }
+  }
+
+  return max(sum / totalWeight, 0.0f);
+}
 
 layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
 void main()
@@ -73,7 +117,7 @@ void main()
   float motionVectorDiff = length(previousMotionVector - currentMotionVector);
   float motionDisocclusion = clamp((motionVectorDiff - 0.001f) * 10.0f, 0.0f, 1.0f);
 
-  vec3 historyColor = texture(texHistory, uv + currentMotionVector).rgb;
+  vec3 historyColor = params.useCatmullRom ? FilteredHistorySampleCatmullRom(prevUV) : texture(texHistory, prevUV).rgb;
   historyColor = clamp(historyColor, minColor, maxColor);
 
   vec3 accumulation = mix(currentColor, historyColor, 0.9f);

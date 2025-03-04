@@ -105,7 +105,7 @@ glm::vec2 TAAPass::getJitter()
   return 0.8f * (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
 }
 
-void TAAPass::resolve(vk::CommandBuffer cmd_buf)
+void TAAPass::resolve(vk::CommandBuffer cmd_buf, bool filter_history)
 {
   etna::set_state(
     cmd_buf,
@@ -192,9 +192,11 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf)
   {
     glm::uvec2 resolution;
     glm::vec2 invResolution;
+    uint32_t filterHistory;
   } pushConst{
     .resolution = resolution,
     .invResolution = 1.0f / glm::vec2(resolution),
+    .filterHistory = filter_history,
   };
 
   cmd_buf.pushConstants<PushConstant>(
