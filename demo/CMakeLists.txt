@@ -4,6 +4,7 @@ add_executable(demo
   main.cpp
   Renderer.cpp
   EnvironmentManager.cpp
+  SharpenPass.cpp
   TAAPass.cpp
   WorldRenderer.cpp
   App.cpp
@@ -25,5 +26,6 @@ target_add_shaders(demo
   shaders/geometry_pass.vert
   shaders/geometry_pass.frag
   shaders/prefilter_envmap.comp
+  shaders/sharpen.comp
   shaders/taa_resolve.comp
 )

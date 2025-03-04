@@ -132,12 +132,12 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf, bool filter_history)
     vk::ImageAspectFlagBits::eColor);
 
   etna::set_state(
-      cmd_buf,
-      getCurrentTarget().get(),
-      vk::PipelineStageFlagBits2::eComputeShader,
-      vk::AccessFlagBits2::eShaderSampledRead,
-      vk::ImageLayout::eShaderReadOnlyOptimal,
-      vk::ImageAspectFlagBits::eColor);
+    cmd_buf,
+    getCurrentTarget().get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
 
   etna::set_state(
     cmd_buf,

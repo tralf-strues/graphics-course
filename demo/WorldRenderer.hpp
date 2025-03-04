@@ -14,6 +14,7 @@
 #include "FramePacket.hpp"
 #include "EnvironmentManager.hpp"
 #include "TAAPass.hpp"
+#include "SharpenPass.hpp"
 
 
 /**
@@ -42,12 +43,6 @@ private:
 
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
-  etna::Buffer& getPrevCameraData();
-  etna::Buffer& getCurrCameraData();
-
-  std::vector<glm::mat4x4>& getPrevTransforms();
-  std::vector<glm::mat4x4>& getCurrTransforms();
-
 private:
   enum DebugPreviewMode : uint32_t {
     DebugPreviewDisabled,
@@ -68,9 +63,6 @@ private:
   // instead of just mapping the buffer... could get quite large in the future, and not
   // all of us have amd gpus :)
   constexpr static uint32_t MAX_POINT_LIGHTS = 32U;
-
-  template<typename T, size_t N = 2>
-  using Temporal = std::array<T, N>;
 
   std::unique_ptr<SceneManager> sceneMgr;
 
@@ -96,10 +88,7 @@ private:
   /* Geometry Pass */
   etna::GraphicsPipeline geometryPassPipeline;
 
-  size_t curCameraDataIdx = 0;
   Temporal<etna::Buffer> cameraData;
-
-  size_t curTransformFrameIdx = 0;
   Temporal<std::vector<glm::mat4x4>> transforms;
 
   etna::Image depth;
@@ -138,6 +127,9 @@ private:
   bool unjitterTextureUVs = true;
   bool filterHistory = true;
   float materialTextureMipBias = -0.5f;
+
+  /* Sharpen Pass */
+  SharpenPass sharpenPass;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;
