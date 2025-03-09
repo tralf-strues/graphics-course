@@ -9,7 +9,7 @@ public:
   using container = std::array<T, NumFrames>;
   using iterator = container::iterator;
 
-  T& getPrevious() { return data[(currentIndex - 1) % NumFrames]; }
+  T& getPrevious() { return data[(NumFrames + currentIndex - 1) % NumFrames]; }
   T& getCurrent() { return data[currentIndex]; }
 
   void proceed() { currentIndex = (currentIndex + 1) % NumFrames; }

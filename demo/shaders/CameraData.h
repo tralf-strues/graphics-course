@@ -21,7 +21,7 @@ struct CameraData
   shader_vec3 wsForward;
   float _pad3;
 
-  shader_vec2 jitterUV;
+  shader_vec2 jitterNDC;
   shader_vec2 jitterPixels;
 };
 

@@ -102,7 +102,12 @@ etna::Image& TAAPass::getMotionVectors()
 
 glm::vec2 TAAPass::getJitter()
 {
-  return 0.8f * (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
+  return jitterScale * (HALTON_SEQUENCE[curJitterIdx] - 0.5f) / glm::vec2(resolution);
+}
+
+float& TAAPass::getJitterScale()
+{
+  return jitterScale;
 }
 
 void TAAPass::resolve(vk::CommandBuffer cmd_buf, bool filter_history)

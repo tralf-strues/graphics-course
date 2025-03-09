@@ -342,8 +342,8 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();
     mainCamera.wsUp = packet.mainCam.up();
-    mainCamera.jitterUV = jitter;
-    mainCamera.jitterPixels = jitter * glm::vec2(resolution);
+    mainCamera.jitterNDC = jitter;
+    mainCamera.jitterPixels = (jitter / 2.0f) * glm::vec2(resolution);
     std::memcpy(cameraData.getCurrent().data(), &mainCamera, sizeof(mainCamera));
 
     pushConstDeferredPass.proj22 = proj[2][2];
@@ -902,6 +902,7 @@ void WorldRenderer::drawGui()
     static float newMaterialTextureMipBias = materialTextureMipBias;
 
     ImGui::Checkbox("Enable TAA", &enableTAA);
+    ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
     ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
     ImGui::Checkbox("Filter History", &filterHistory);
     ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");

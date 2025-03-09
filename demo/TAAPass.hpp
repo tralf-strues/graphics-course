@@ -21,6 +21,8 @@ public:
   etna::Image& getMotionVectors();
   glm::vec2 getJitter();
 
+  float& getJitterScale();
+
   void resolve(vk::CommandBuffer cmd_buf, bool filter_history);
 
 private:
@@ -43,4 +45,6 @@ private:
   Temporal<etna::Image> resolveTargets;
 
   size_t curJitterIdx = 0;
+
+  float jitterScale = 2.0f;
 };

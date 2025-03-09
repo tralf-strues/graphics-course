@@ -104,8 +104,8 @@ void main()
   vec2 currPosNDC = vertex.currPosClip.xy / vertex.currPosClip.w;
 
   vec2 motionVectorUV = 0.5f * (prevPosNDC - currPosNDC);
-  motionVectorUV -= prevCamera.jitterUV;
-  motionVectorUV += currCamera.jitterUV;
+  motionVectorUV -= 0.5f * prevCamera.jitterNDC;
+  motionVectorUV += 0.5f * currCamera.jitterNDC;
 
   out_motionVectors = motionVectorUV;
 }
