@@ -25,6 +25,56 @@ constexpr std::array ENVIRONMENT_FILEPATHS = {
 WorldRenderer::WorldRenderer()
   : sceneMgr{std::make_unique<SceneManager>()}
   , environmentManager({})
+  , shadowCameraBuffer(
+      etna::get_context().getMainWorkCount(),
+      [](std::size_t fif) {
+        auto buffer = etna::get_context().createBuffer(etna::Buffer::CreateInfo{
+          .size = sizeof(CameraData),
+          .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
+          .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+          .name = "shadowCamera[fif = " + std::to_string(fif) + "]",
+        });
+
+        buffer.map();
+        return buffer;
+      })
+  , prevCameraBuffer(
+      etna::get_context().getMainWorkCount(),
+      [](std::size_t fif) {
+        auto buffer = etna::get_context().createBuffer(etna::Buffer::CreateInfo{
+          .size = sizeof(CameraData),
+          .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
+          .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+          .name = "prevCameraData[fif = " + std::to_string(fif) + "]",
+        });
+
+        buffer.map();
+        return buffer;
+      })
+  , currCameraBuffer(
+      etna::get_context().getMainWorkCount(),
+      [](std::size_t fif) {
+        auto buffer = etna::get_context().createBuffer(etna::Buffer::CreateInfo{
+          .size = sizeof(CameraData),
+          .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
+          .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+          .name = "currCameraData[fif = " + std::to_string(fif) + "]",
+        });
+
+        buffer.map();
+        return buffer;
+      })
+  , lightBuffer(etna::get_context().getMainWorkCount(), [](std::size_t fif) {
+    auto buffer = etna::get_context().createBuffer(etna::Buffer::CreateInfo{
+      .size = sizeof(DirectionalLight) + sizeof(uint32_t) + MAX_POINT_LIGHTS * sizeof(PointLight),
+      .bufferUsage = vk::BufferUsageFlagBits::eStorageBuffer,
+      .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
+      .name = "lightData[fif = " + std::to_string(fif) + "]",
+    });
+
+    buffer.map();
+    return buffer;
+  })
 {
 }
 
@@ -61,18 +111,11 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   environmentManager.allocateResources();
+  hizPass.allocateResources(swapchain_resolution, HiZPass::FULL_MIPCHAIN);
   taaPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
   sharpenPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
 
   /* Shadow Pass */
-  shadowCameraData = ctx.createBuffer(etna::Buffer::CreateInfo{
-    .size = sizeof(CameraData),
-    .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
-    .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-    .name = "shadowCameraData",
-  });
-  shadowCameraData.map();
-
   shadowMap = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{2048, 2048, 1},
     .name = "shadowMap",
@@ -82,18 +125,6 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   /* Geometry Pass */
-  for (size_t i = 0; i < cameraData.size(); ++i)
-  {
-    cameraData[i] = ctx.createBuffer(etna::Buffer::CreateInfo{
-      .size = sizeof(CameraData),
-      .bufferUsage = vk::BufferUsageFlagBits::eUniformBuffer,
-      .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-      .name = "cameraData[" + std::to_string(i) + "]",
-    });
-
-    cameraData[i].map();
-  }
-
   depth = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "depth",
@@ -122,14 +153,6 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .format = GBUFFER_NORM_FORMAT,
     .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
-
-  /* Deferred Pass */
-  lightData = ctx.createBuffer(etna::Buffer::CreateInfo{
-    .size = sizeof(DirectionalLight) + sizeof(uint32_t) + MAX_POINT_LIGHTS * sizeof(PointLight),
-    .bufferUsage = vk::BufferUsageFlagBits::eStorageBuffer,
-    .memoryUsage = VMA_MEMORY_USAGE_CPU_ONLY,
-    .name = "lightData"});
-  lightData.map();
 }
 
 void WorldRenderer::loadScene(std::filesystem::path path)
@@ -162,6 +185,7 @@ void WorldRenderer::loadShaders()
     "render_cubemap", {DEMO_SHADERS_ROOT "cubemap.vert.spv", DEMO_SHADERS_ROOT "cubemap.frag.spv"});
 
   environmentManager.loadShaders();
+  hizPass.loadShaders();
   taaPass.loadShaders();
   sharpenPass.loadShaders();
 }
@@ -273,6 +297,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
     });
 
   environmentManager.setupPipelines();
+  hizPass.setupPipelines();
   taaPass.setupPipelines();
   sharpenPass.setupPipelines();
 }
@@ -292,7 +317,7 @@ void WorldRenderer::update(const FramePacket& packet)
 
   // update light data
   {
-    auto* dst = lightData.data();
+    auto* dst = lightBuffer.get().data();
 
     std::memcpy(dst, &packet.dirLight, sizeof(packet.dirLight));
     dst += sizeof(packet.dirLight);
@@ -319,7 +344,7 @@ void WorldRenderer::update(const FramePacket& packet)
     shadowCamera.projView = proj * shadowCamera.view;
     shadowCamera.wsPos = glm::vec4(shadowCam.position, 0.0f);
 
-    std::memcpy(shadowCameraData.data(), &shadowCamera, sizeof(shadowCamera));
+    std::memcpy(shadowCameraBuffer.get().data(), &shadowCamera, sizeof(shadowCamera));
   }
 
   // calc main view camera
@@ -334,7 +359,7 @@ void WorldRenderer::update(const FramePacket& packet)
       proj = glm::translate(glm::identity<glm::mat4>(), glm::vec3(jitter, 0.0f)) * proj;
     }
 
-    CameraData mainCamera;
+    auto& mainCamera = cameraData.getCurrent();
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.proj = proj;
     mainCamera.projView = proj * mainCamera.view;
@@ -344,7 +369,9 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.wsUp = packet.mainCam.up();
     mainCamera.jitterNDC = jitter;
     mainCamera.jitterPixels = (jitter / 2.0f) * glm::vec2(resolution);
-    std::memcpy(cameraData.getCurrent().data(), &mainCamera, sizeof(mainCamera));
+
+    std::memcpy(currCameraBuffer.get().data(), &cameraData.getCurrent(), sizeof(CameraData));
+    std::memcpy(prevCameraBuffer.get().data(), &cameraData.getPrevious(), sizeof(CameraData));
 
     pushConstDeferredPass.proj22 = proj[2][2];
     pushConstDeferredPass.proj23 = proj[3][2];
@@ -358,24 +385,27 @@ void WorldRenderer::update(const FramePacket& packet)
     auto& currTransforms = transforms.getCurrent();
     std::copy(originalMatrices.begin(), originalMatrices.end(), currTransforms.begin());
 
-    for (size_t instIdx = 0; instIdx < originalMatrices.size(); ++instIdx)
+    if (animate)
     {
-      float sign = (instIdx % 2) == 0 ? 1.0f : -1.0f;
+      for (size_t instIdx = 0; instIdx < originalMatrices.size(); ++instIdx)
+      {
+        float sign = (instIdx % 2) == 0 ? 1.0f : -1.0f;
 
-      if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Side") != std::string::npos)
-      {
-        currTransforms[instIdx] = glm::translate(
-          glm::identity<glm::mat4>(),
-          glm::vec3(0.0f, 0.75f * sign * cos(4.0f * packet.currentTime), 0.0f));
-      }
-      else if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Back") != std::string::npos)
-      {
-        currTransforms[instIdx] = glm::translate(
-          glm::identity<glm::mat4>(),
-          glm::vec3(
-            2.0f * sign * cos(5.0f * packet.currentTime),
-            2.0f * sign * sin(2.0f * packet.currentTime),
-            0.0f));
+        if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Side") != std::string::npos)
+        {
+          currTransforms[instIdx] = glm::translate(
+            glm::identity<glm::mat4>(),
+            glm::vec3(0.0f, 0.75f * sign * cos(4.0f * packet.currentTime), 0.0f));
+        }
+        else if (sceneMgr->getInstanceNames()[instIdx].find("Sphere Back") != std::string::npos)
+        {
+          currTransforms[instIdx] = glm::translate(
+            glm::identity<glm::mat4>(),
+            glm::vec3(
+              2.0f * sign * cos(5.0f * packet.currentTime),
+              2.0f * sign * sin(2.0f * packet.currentTime),
+              0.0f));
+        }
       }
     }
   }
@@ -445,7 +475,7 @@ void WorldRenderer::renderScene(
         .albedo = relem.material->albedo,
         .metalness = relem.material->metalness,
         .roughness = relem.material->roughness,
-        .unjitterTextureUVs = unjitterTextureUVs,
+        .unjitterTextureUVs = static_cast<shader_bool>(unjitterTextureUVs),
       };
 
       cmd_buf.pushConstants<PushConstant>(
@@ -514,8 +544,8 @@ void WorldRenderer::renderWorld(
       shadowPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, shadowCameraData.genBinding()},
-        etna::Binding{1, shadowCameraData.genBinding()},
+        etna::Binding{0, shadowCameraBuffer.get().genBinding()},
+        etna::Binding{1, shadowCameraBuffer.get().genBinding()},
       });
 
     etna::RenderTargetState renderTargets(
@@ -544,8 +574,8 @@ void WorldRenderer::renderWorld(
       geometryPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.getPrevious().genBinding()},
-        etna::Binding{1, cameraData.getCurrent().genBinding()},
+        etna::Binding{0, prevCameraBuffer.get().genBinding()},
+        etna::Binding{1, currCameraBuffer.get().genBinding()},
       });
 
     etna::RenderTargetState renderTargets(
@@ -650,7 +680,7 @@ void WorldRenderer::renderWorld(
       deferredPassInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.getCurrent().genBinding()},
+        etna::Binding{0, currCameraBuffer.get().genBinding()},
       });
 
     auto resourceSet = etna::create_descriptor_set(
@@ -688,8 +718,8 @@ void WorldRenderer::renderWorld(
           environmentManager.getEnvBRDF().genBinding(
             linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
-        etna::Binding(8, shadowCameraData.genBinding()),
-        etna::Binding(9, lightData.genBinding()),
+        etna::Binding(8, shadowCameraBuffer.get().genBinding()),
+        etna::Binding(9, lightBuffer.get().genBinding()),
         etna::Binding(10, environment.irradianceSHCoefficientBuffer.genBinding()),
       });
 
@@ -778,7 +808,7 @@ void WorldRenderer::renderWorld(
       renderCubemapInfo.getDescriptorLayoutId(0),
       cmd_buf,
       {
-        etna::Binding{0, cameraData.getCurrent().genBinding()},
+        etna::Binding{0, currCameraBuffer.get().genBinding()},
       });
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, renderCubemapPipeline.getVkPipeline());
@@ -795,11 +825,11 @@ void WorldRenderer::renderWorld(
     cmd_buf.draw(36, 1, 0, 0);
   }
 
-  taaPass.resolve(cmd_buf, filterHistory);
-
   auto& resolveTarget = enableTAA ? taaPass.getResolveTarget() : deferredTarget;
 
+  taaPass.resolve(cmd_buf, filterHistory);
   sharpenPass.execute(cmd_buf, resolveTarget, pointSampler);
+  hizPass.execute(cmd_buf, depth);
 
   // Blit from target to swapchain image
   {
@@ -901,6 +931,7 @@ void WorldRenderer::drawGui()
   {
     static float newMaterialTextureMipBias = materialTextureMipBias;
 
+    ImGui::Checkbox("Animate objects", &animate);
     ImGui::Checkbox("Enable TAA", &enableTAA);
     ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
     ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);

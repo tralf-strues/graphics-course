@@ -4,6 +4,7 @@ add_executable(demo
   main.cpp
   Renderer.cpp
   EnvironmentManager.cpp
+  HiZPass.cpp
   SharpenPass.cpp
   TAAPass.cpp
   WorldRenderer.cpp
@@ -25,6 +26,7 @@ target_add_shaders(demo
   shaders/demo_specular_ibl.frag
   shaders/geometry_pass.vert
   shaders/geometry_pass.frag
+  shaders/hiz.comp
   shaders/prefilter_envmap.comp
   shaders/sharpen.comp
   shaders/taa_resolve.comp
