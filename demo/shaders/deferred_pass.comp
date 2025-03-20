@@ -96,7 +96,14 @@ void main()
     return;
   }
 
-  vec2 uv = (vec2(coord) + 0.5f) * params.invResolution;
+  vec2  uv    = (vec2(coord) + 0.5f) * params.invResolution;
+  float depth = texture(depthBuffer, uv).r;
+
+  if (depth == 1.0f)
+  {
+    imageStore(out_color, ivec2(coord), vec4(0.0f, 0.0f, 0.0f, 1.0f));
+    return;
+  }
 
   /* Unpacking the surface point properties */
   SurfacePoint point;
@@ -113,7 +120,6 @@ void main()
 
   // Position reconstruction from depth.
   // Inspired by: https://mynameismjp.wordpress.com/2010/09/05/position-from-depth-3/
-  float depth       = texture(depthBuffer, uv).r;
   vec2  ndcXY       = 2.0f * uv - 1.0f;
   float vsZ         = params.proj23 / (depth - params.proj22);
   point.position    = camera.wsPos + vsZ * (camera.wsForward -

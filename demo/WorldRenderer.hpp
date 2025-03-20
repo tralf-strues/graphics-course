@@ -11,8 +11,12 @@
 #include "render_utils/QuadRenderer.hpp"
 #include "wsi/Keyboard.hpp"
 
+#include "shaders/CameraData.h"
 #include "FramePacket.hpp"
 #include "EnvironmentManager.hpp"
+#include "HiZPass.hpp"
+#include "TAAPass.hpp"
+#include "SharpenPass.hpp"
 
 
 /**
@@ -37,6 +41,8 @@ public:
     vk::CommandBuffer cmd_buf, vk::Image target_image, vk::ImageView target_image_view);
 
 private:
+  void recreateMaterialTextureSampler();
+
   void renderScene(vk::CommandBuffer cmd_buf, etna::ShaderProgramInfo info, bool material_pass);
 
 private:
@@ -66,6 +72,8 @@ private:
   etna::Sampler linearSamplerClampToEdge;
   etna::Sampler pointSampler;
 
+  vk::UniqueSampler materialTextureSampler;
+
   glm::uvec2 resolution;
 
   /* Environment */
@@ -76,13 +84,19 @@ private:
   /* Shadow Pass */
   etna::GraphicsPipeline shadowPassPipeline;
 
-  etna::Buffer shadowCameraData;
+  etna::GpuSharedResource<etna::Buffer> shadowCameraBuffer;
   etna::Image shadowMap;
 
   /* Geometry Pass */
   etna::GraphicsPipeline geometryPassPipeline;
 
-  etna::Buffer cameraData;
+  etna::GpuSharedResource<etna::Buffer> prevCameraBuffer;
+  etna::GpuSharedResource<etna::Buffer> currCameraBuffer;
+  Temporal<CameraData> cameraData;
+
+  Temporal<std::vector<glm::mat4x4>> transforms;
+  bool animate = true;
+
   etna::Image depth;
   etna::Image gBufferAlbedo;
   etna::Image gBufferMetalnessRoughness;
@@ -91,8 +105,7 @@ private:
   /* Deferred Pass */
   etna::ComputePipeline deferredPassPipeline;
 
-  etna::Buffer lightData;
-  etna::Image deferredTarget;
+  etna::GpuSharedResource<etna::Buffer> lightBuffer;
 
   struct PushConstantDeferredPass {
     glm::uvec2 resolution;
@@ -113,6 +126,19 @@ private:
 
   /* Forward Pass */
   etna::GraphicsPipeline renderCubemapPipeline;
+
+  /* HiZ */
+  HiZPass hizPass;
+
+  /* TAA */
+  TAAPass taaPass;
+  bool enableTAA = true;
+  bool unjitterTextureUVs = true;
+  bool filterHistory = true;
+  float materialTextureMipBias = 0.0f;
+
+  /* Sharpen Pass */
+  SharpenPass sharpenPass;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;

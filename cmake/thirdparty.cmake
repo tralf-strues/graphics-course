@@ -56,8 +56,8 @@ CPMAddPackage(
 # etna -- our wrapper around Vulkan to make life easier
 CPMAddPackage(
   NAME etna
-  GITHUB_REPOSITORY AlexandrShcherbakov/etna
-  VERSION 1.7.0
+  GITHUB_REPOSITORY tralf-strues/etna
+  GIT_TAG explicit-set-state
 )
 
 # Type-erased function containers that actually work
