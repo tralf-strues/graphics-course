@@ -1,0 +1,13 @@
+Name,Value,Byte Offset,Type
+resolution,"640, 360",0,uint2
+invResolution,"0.00156, 0.00278",8,float2
+proj22,"1.001",16,float
+proj23,"-0.1001",20,float
+invProj00,"-1.0264",24,float
+invProj11,"-0.57735",28,float
+envMapMips,"6",32,uint
+enableEmission,"1",36,uint
+enableDiffuseIBL,"1",40,uint
+enableSpecularIBL,"1",44,uint
+enableDirectionalLight,"0",48,uint
+enablePointLights,"0",52,uint
