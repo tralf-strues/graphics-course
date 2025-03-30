@@ -15,6 +15,7 @@
 #include "FramePacket.hpp"
 #include "EnvironmentManager.hpp"
 #include "HiZPass.hpp"
+#include "SSSRPass.hpp"
 #include "TAAPass.hpp"
 #include "SharpenPass.hpp"
 
@@ -122,6 +123,7 @@ private:
     shader_bool enableSpecularIBL;
     shader_bool enableDirectionalLight;
     shader_bool enablePointLights;
+    shader_bool enableReflections;
   } pushConstDeferredPass;
 
   /* Forward Pass */
@@ -129,6 +131,12 @@ private:
 
   /* HiZ */
   HiZPass hizPass;
+
+  /* SSSR */
+  SSSRPass sssrPass;
+  int32_t sssrMaxIterations = 100;
+  float sssrDepthThickness = 0.0001f;
+  bool showJustReflections = false;
 
   /* TAA */
   TAAPass taaPass;

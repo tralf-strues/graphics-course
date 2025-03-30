@@ -24,13 +24,14 @@ layout(set = 1, binding = 4) uniform sampler2D depthBuffer;
 layout(set = 1, binding = 5) uniform sampler2D shadowMap;
 layout(set = 1, binding = 6) uniform samplerCube texPrefilteredEnvMap;
 layout(set = 1, binding = 7) uniform sampler2D texEnvBRDF;
+layout(set = 1, binding = 8) uniform sampler2D texReflections;
 
-layout(set = 1, binding = 8) uniform shadow_camera_data_t
+layout(set = 1, binding = 9) uniform shadow_camera_data_t
 {
   CameraData shadowCamera;
 };
 
-layout(set = 1, binding = 9, std430) readonly buffer light_data_t
+layout(set = 1, binding = 10, std430) readonly buffer light_data_t
 {
   DirectionalLight dirLight;
 
@@ -40,7 +41,7 @@ layout(set = 1, binding = 9, std430) readonly buffer light_data_t
   PointLight pointLights[];
 };
 
-layout(set = 1, binding = 10, scalar) readonly buffer DiffuseIrradianceSH {
+layout(set = 1, binding = 11, scalar) readonly buffer DiffuseIrradianceSH {
   vec3 E_lm[9];
 };
 
@@ -60,6 +61,7 @@ layout(push_constant) uniform params_t
   shader_bool enableSpecularIBL;
   shader_bool enableDirectionalLight;
   shader_bool enablePointLights;
+  shader_bool enableReflections;
 } params;
 //==================================================================================================
 
@@ -132,6 +134,11 @@ void main()
 
   /* Lighting */
   vec3 L0 = vec3(0.0f);
+
+  if (params.enableReflections)
+  {
+    L0 += texture(texReflections, uv).rgb * LambertianDiffuseBRDF(point);
+  }
 
   // Diffuse IBL
   if (params.enableDiffuseIBL)

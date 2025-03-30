@@ -201,7 +201,7 @@ void TAAPass::resolve(vk::CommandBuffer cmd_buf, bool filter_history)
   } pushConst{
     .resolution = resolution,
     .invResolution = 1.0f / glm::vec2(resolution),
-    .filterHistory = filter_history,
+    .filterHistory = static_cast<uint32_t>(filter_history),
   };
 
   cmd_buf.pushConstants<PushConstant>(

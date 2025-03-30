@@ -112,6 +112,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
 
   environmentManager.allocateResources();
   hizPass.allocateResources(swapchain_resolution, HiZPass::FULL_MIPCHAIN);
+  sssrPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
   taaPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
   sharpenPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
 
@@ -186,6 +187,7 @@ void WorldRenderer::loadShaders()
 
   environmentManager.loadShaders();
   hizPass.loadShaders();
+  sssrPass.loadShaders();
   taaPass.loadShaders();
   sharpenPass.loadShaders();
 }
@@ -298,6 +300,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
 
   environmentManager.setupPipelines();
   hizPass.setupPipelines();
+  sssrPass.setupPipelines();
   taaPass.setupPipelines();
   sharpenPass.setupPipelines();
 }
@@ -618,6 +621,26 @@ void WorldRenderer::renderWorld(
     renderScene(cmd_buf, geometryPassInfo, true);
   }
 
+  hizPass.execute(cmd_buf, depth);
+
+  sssrPass.execute(
+    cmd_buf,
+    SSSRPass::Params{
+      .resolution = pushConstDeferredPass.resolution,
+      .invResolution = pushConstDeferredPass.invResolution,
+      .proj22 = pushConstDeferredPass.proj22,
+      .proj23 = pushConstDeferredPass.proj23,
+      .invProj00 = pushConstDeferredPass.invProj00,
+      .invProj11 = pushConstDeferredPass.invProj11,
+      .maxIterations = sssrMaxIterations,
+      .depthThickness = sssrDepthThickness,
+    },
+    currCameraBuffer.get(),
+    hizPass.getHiZ(),
+    gBufferNorm,
+    taaPass.getMotionVectors(),
+    taaPass.getHistory());
+
   auto& deferredTarget = taaPass.getCurrentTarget();
 
   // Deferred Pass
@@ -672,6 +695,14 @@ void WorldRenderer::renderWorld(
       vk::ImageLayout::eShaderReadOnlyOptimal,
       vk::ImageAspectFlagBits::eDepth);
 
+    etna::set_state(
+      cmd_buf,
+      sssrPass.getReflectionTarget().get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
     etna::flush_barriers(cmd_buf);
 
     auto deferredPassInfo = etna::get_shader_program("deferred_pass");
@@ -717,10 +748,14 @@ void WorldRenderer::renderWorld(
           7,
           environmentManager.getEnvBRDF().genBinding(
             linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(
+          8,
+          sssrPass.getReflectionTarget().genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
-        etna::Binding(8, shadowCameraBuffer.get().genBinding()),
-        etna::Binding(9, lightBuffer.get().genBinding()),
-        etna::Binding(10, environment.irradianceSHCoefficientBuffer.genBinding()),
+        etna::Binding(9, shadowCameraBuffer.get().genBinding()),
+        etna::Binding(10, lightBuffer.get().genBinding()),
+        etna::Binding(11, environment.irradianceSHCoefficientBuffer.genBinding()),
       });
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, deferredPassPipeline.getVkPipeline());
@@ -829,13 +864,15 @@ void WorldRenderer::renderWorld(
 
   taaPass.resolve(cmd_buf, filterHistory);
   sharpenPass.execute(cmd_buf, resolveTarget, pointSampler);
-  hizPass.execute(cmd_buf, depth);
+
+  auto& blitSrc = showJustReflections ? sssrPass.getReflectionTarget() : sharpenPass.getTarget();
 
   // Blit from target to swapchain image
   {
     etna::set_state(
       cmd_buf,
-      sharpenPass.getTarget().get(),
+      // sharpenPass.getTarget().get(),
+      blitSrc.get(),
       vk::PipelineStageFlagBits2::eTransfer,
       vk::AccessFlagBits2::eTransferRead,
       vk::ImageLayout::eTransferSrcOptimal,
@@ -875,7 +912,8 @@ void WorldRenderer::renderWorld(
     };
 
     cmd_buf.blitImage(
-      sharpenPass.getTarget().get(),
+      // sharpenPass.getTarget().get(),
+      blitSrc.get(),
       vk::ImageLayout::eTransferSrcOptimal,
       target_image,
       vk::ImageLayout::eTransferDstOptimal,
@@ -947,6 +985,12 @@ void WorldRenderer::drawGui()
 
     ImGui::NewLine();
 
+    ImGui::SliderInt("SSSR Max iterations", &sssrMaxIterations, 1, 1000);
+    ImGui::SliderFloat("SSSR Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
+    ImGui::Checkbox("Show Reflections Only", &showJustReflections);
+
+    ImGui::NewLine();
+
     ImGui::SeparatorText("Environment");
 
     ImGui::Combo(
@@ -1015,16 +1059,19 @@ void WorldRenderer::drawGui()
     static bool enableSpecularIBL = true;
     static bool enableDirectionalLight = false;
     static bool enablePointLights = false;
+    static bool enableReflections = false;
     ImGui::Checkbox("Enable Emission", &enableEmission);
     ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
     ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
     ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
     ImGui::Checkbox("Enable Point Lights", &enablePointLights);
+    ImGui::Checkbox("Enable Reflections", &enableReflections);
     pushConstDeferredPass.enableEmission = static_cast<shader_bool>(enableEmission);
     pushConstDeferredPass.enableDiffuseIBL = static_cast<shader_bool>(enableDiffuseIBL);
     pushConstDeferredPass.enableSpecularIBL = static_cast<shader_bool>(enableSpecularIBL);
     pushConstDeferredPass.enableDirectionalLight = static_cast<shader_bool>(enableDirectionalLight);
     pushConstDeferredPass.enablePointLights = static_cast<shader_bool>(enablePointLights);
+    pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
 
     ImGui::NewLine();
   }

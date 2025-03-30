@@ -6,6 +6,7 @@ add_executable(demo
   EnvironmentManager.cpp
   HiZPass.cpp
   SharpenPass.cpp
+  SSSRPass.cpp
   TAAPass.cpp
   WorldRenderer.cpp
   App.cpp
@@ -29,5 +30,6 @@ target_add_shaders(demo
   shaders/hiz.comp
   shaders/prefilter_envmap.comp
   shaders/sharpen.comp
+  shaders/sssr.comp
   shaders/taa_resolve.comp
 )
