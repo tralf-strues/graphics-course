@@ -137,6 +137,10 @@ private:
   int32_t sssrMaxIterations = 100;
   float sssrDepthThickness = 0.0001f;
   bool showJustReflections = false;
+  int32_t startMipLevel = 0;
+  bool traceBehindSurfaces = false;
+  bool useWorldSpaceHitConfidence = false;
+  bool visualizeIterationCount = false;
 
   /* TAA */
   TAAPass taaPass;

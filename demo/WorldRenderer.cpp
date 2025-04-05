@@ -634,6 +634,10 @@ void WorldRenderer::renderWorld(
       .invProj11 = pushConstDeferredPass.invProj11,
       .maxIterations = sssrMaxIterations,
       .depthThickness = sssrDepthThickness,
+      .startMipLevel = startMipLevel,
+      .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
+      .useWorldSpaceHitConfidence = static_cast<shader_bool>(useWorldSpaceHitConfidence),
+      .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
     },
     currCameraBuffer.get(),
     hizPass.getHiZ(),
@@ -970,6 +974,11 @@ void WorldRenderer::drawGui()
     static float newMaterialTextureMipBias = materialTextureMipBias;
 
     ImGui::Checkbox("Animate objects", &animate);
+
+    ImGui::NewLine();
+
+    ImGui::SeparatorText("TAA");
+
     ImGui::Checkbox("Enable TAA", &enableTAA);
     ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
     ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
@@ -983,11 +992,23 @@ void WorldRenderer::drawGui()
       recreateMaterialTextureSampler();
     }
 
+    ImGui::SeparatorText("SSSR");
+
+    static bool enableReflections = false;
+    ImGui::Checkbox("Enable SSSR", &enableReflections);
+    pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
+
+    ImGui::Checkbox("Show reflections only", &showJustReflections);
+    ImGui::Checkbox("Show iteration complexity", &visualizeIterationCount);
+
     ImGui::NewLine();
 
-    ImGui::SliderInt("SSSR Max iterations", &sssrMaxIterations, 1, 1000);
-    ImGui::SliderFloat("SSSR Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
-    ImGui::Checkbox("Show Reflections Only", &showJustReflections);
+    ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
+    ImGui::Checkbox("Use WS hit confidence", &useWorldSpaceHitConfidence);
+
+    ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 1000);
+    ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
+    ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
 
     ImGui::NewLine();
 
@@ -1007,47 +1028,48 @@ void WorldRenderer::drawGui()
 
     ImGui::NewLine();
 
-    ImGui::Text("Irradiance SH Coefficients:");
-
-    constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
-      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
-    if (ImGui::BeginTable("table1", 4, FLAGS))
+    if (ImGui::CollapsingHeader("Irradiance SH Coefficients", ImGuiTreeNodeFlags_None))
     {
-      ImGui::TableSetupColumn("E_l,m");
-      ImGui::TableSetupColumn("R");
-      ImGui::TableSetupColumn("G");
-      ImGui::TableSetupColumn("B");
-      ImGui::TableHeadersRow();
-
-      constexpr std::array ROW_NAMES = {
-        "E_0,0",
-        "E_1,1",
-        "E_1,0",
-        "E_1,-1",
-        "E_2,1",
-        "E_2,-1",
-        "E_2,_2",
-        "E_2,0",
-        "E_2,2",
-      };
-
-      for (size_t row = 0; row < ROW_NAMES.size(); ++row)
+      constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
+      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
+      if (ImGui::BeginTable("table1", 4, FLAGS))
       {
-        ImGui::TableNextRow();
+        ImGui::TableSetupColumn("E_l,m");
+        ImGui::TableSetupColumn("R");
+        ImGui::TableSetupColumn("G");
+        ImGui::TableSetupColumn("B");
+        ImGui::TableHeadersRow();
 
-        ImGui::TableSetColumnIndex(0);
-        ImGui::Text("%s", ROW_NAMES[row]);
+        constexpr std::array ROW_NAMES = {
+          "E_0,0",
+          "E_1,1",
+          "E_1,0",
+          "E_1,-1",
+          "E_2,1",
+          "E_2,-1",
+          "E_2,_2",
+          "E_2,0",
+          "E_2,2",
+        };
 
-        const auto* coeffs = &environmentManager.getEnvironments()[environmentIdx]
-                                .irradianceSHCoefficientArray[3U * row];
-
-        for (size_t column = 0; column < 3; ++column)
+        for (size_t row = 0; row < ROW_NAMES.size(); ++row)
         {
-          ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
-          ImGui::Text("%f", coeffs[column]);
+          ImGui::TableNextRow();
+
+          ImGui::TableSetColumnIndex(0);
+          ImGui::Text("%s", ROW_NAMES[row]);
+
+          const auto* coeffs = &environmentManager.getEnvironments()[environmentIdx]
+                                  .irradianceSHCoefficientArray[3U * row];
+
+          for (size_t column = 0; column < 3; ++column)
+          {
+            ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
+            ImGui::Text("%f", coeffs[column]);
+          }
         }
+        ImGui::EndTable();
       }
-      ImGui::EndTable();
     }
 
     ImGui::NewLine();
@@ -1059,19 +1081,16 @@ void WorldRenderer::drawGui()
     static bool enableSpecularIBL = true;
     static bool enableDirectionalLight = false;
     static bool enablePointLights = false;
-    static bool enableReflections = false;
     ImGui::Checkbox("Enable Emission", &enableEmission);
     ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
     ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
     ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
     ImGui::Checkbox("Enable Point Lights", &enablePointLights);
-    ImGui::Checkbox("Enable Reflections", &enableReflections);
     pushConstDeferredPass.enableEmission = static_cast<shader_bool>(enableEmission);
     pushConstDeferredPass.enableDiffuseIBL = static_cast<shader_bool>(enableDiffuseIBL);
     pushConstDeferredPass.enableSpecularIBL = static_cast<shader_bool>(enableSpecularIBL);
     pushConstDeferredPass.enableDirectionalLight = static_cast<shader_bool>(enableDirectionalLight);
     pushConstDeferredPass.enablePointLights = static_cast<shader_bool>(enablePointLights);
-    pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
 
     ImGui::NewLine();
   }

@@ -5,6 +5,7 @@
 #include <etna/ComputePipeline.hpp>
 #include <glm/glm.hpp>
 
+#include "cpp_glsl_compat.h"
 
 class SSSRPass
 {
@@ -19,6 +20,10 @@ public:
     float invProj11;
     int32_t maxIterations;
     float depthThickness;
+    int32_t startMipLevel;
+    shader_bool traceBehindSurfaces;
+    shader_bool useWorldSpaceHitConfidence;
+    shader_bool visualizeIterationCount;
   };
 
   void loadShaders();

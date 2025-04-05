@@ -48,6 +48,11 @@ etna::Image& HiZPass::getHiZ()
   return hiz;
 }
 
+size_t HiZPass::getMipCount() const
+{
+  return mipLevels;
+}
+
 void HiZPass::execute(vk::CommandBuffer cmds, etna::Image& depth)
 {
   ETNA_PROFILE_GPU(cmds, HiZPass);

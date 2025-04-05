@@ -31,6 +31,11 @@ layout(push_constant) uniform params_t
 
   int maxIterations;
   float depthThickness;
+
+  int startMip;
+  bool traceBehindSurfaces;
+  bool useWorldSpaceHitConfidence;
+  bool visualizeIterationCount;
 } params;
 
 vec3 ConvertWorldToScreen(vec3 posWS)
@@ -42,6 +47,17 @@ vec3 ConvertWorldToScreen(vec3 posWS)
   ssPos.xy = 0.5f * ssPos.xy + 0.5f;
 
   return ssPos;
+}
+
+vec3 ConvertScreenToWorld(vec3 posSS)
+{
+  vec2  ndcXY   = 2.0f * posSS.xy - 1.0f;
+  float depthVS = params.proj23 / (posSS.z - params.proj22);
+  vec3  posWS   = camera.wsPos + depthVS * (camera.wsForward -
+                                            camera.wsRight * ndcXY.x * params.invProj00 +
+                                            camera.wsUp    * ndcXY.y * params.invProj11);
+
+  return posWS;
 }
 
 vec3 LoadNormalWS(ivec2 texel_coords)
@@ -63,8 +79,10 @@ void ComputePosAndReflectionSS(
 
   // Position reconstruction from depth
   // Inspired by: https://mynameismjp.wordpress.com/2010/09/05/position-from-depth-3/
+  // NOTE: The uv is unjittered here, yet I'm not sure why it works to be honest... And more
+  // importantly, why it doesn't work without unjittering...
   float depth   = texelFetch(texHiZ, texel_coords, 0).x;
-  vec2  uv      = (vec2(texel_coords) + 0.5f) * params.invResolution;
+  vec2  uv      = (vec2(texel_coords) + 0.5f) * params.invResolution - 0.5f * camera.jitterNDC;
   vec2  ndcXY   = 2.0f * uv - 1.0f;
   float depthVS = params.proj23 / (depth - params.proj22);
   vec3  posWS   = camera.wsPos + depthVS * (camera.wsForward -
@@ -136,9 +154,20 @@ void AdvanceRay(
 
   float t = min(min(tIntersections.x, tIntersections.y), tIntersections.z);
 
-  posSS = aboveZBoundingPlane ? (rayOriginSS + t * reflectionSS) : posSS;
-
   bool lowerDetail = aboveZBoundingPlane && (floatBitsToUint(t) != floatBitsToUint(tIntersections.z));
+
+  if (params.traceBehindSurfaces &&
+      currentMip <= params.startMip &&
+      !lowerDetail &&
+      abs(zBoundingPlane - posSS.z) > params.depthThickness)
+  {
+    vec2 tIntersections = (xyBoundingPlanes - rayOriginSS.xy) * invReflectionSS.xy;
+    float t = min(tIntersections.x, tIntersections.y);
+    posSS = rayOriginSS + t * reflectionSS;
+    return;
+  }
+
+  posSS = aboveZBoundingPlane ? (rayOriginSS + t * reflectionSS) : posSS;
 
   currentMip += lowerDetail ? 1 : -1;
   currentMipResolution *= lowerDetail ? 0.5f : 2.0f;
@@ -166,7 +195,18 @@ float ValidateHit(vec3 posSS, vec3 reflectionWS)
     return 0.0f;
   }
 
-  float confidence = 1.0f - smoothstep(0.0f, params.depthThickness, abs(posSS.z - depth));
+  float dist = 0.0f;
+
+  if (params.useWorldSpaceHitConfidence) {
+    vec3 hitWS = ConvertScreenToWorld(posSS);
+    vec3 dWS = ConvertScreenToWorld(vec3(posSS.xy, depth));
+
+    dist = 0.001f * length(hitWS - dWS);
+  } else {
+    dist = abs(posSS.z - depth);
+  }
+
+  float confidence = 1.0f - smoothstep(0.0f, params.depthThickness, dist);
 
   return confidence;
 }
@@ -204,8 +244,8 @@ void main()
 
   vec3 invReflectionSS = 1.0f / reflectionSS;
 
-  int currentMip = 0;
-  vec2 currentMipResolution = params.resolution;
+  int currentMip = params.startMip;
+  vec2 currentMipResolution = params.resolution / (currentMip == 0 ? 1.0f : exp2(float(currentMip)));
   vec2 currentMipInvResolution = 1.0f / currentMipResolution;
 
   vec2 xyBoundingPlaneStep = vec2(0.0f);
@@ -228,7 +268,8 @@ void main()
     currentPosSS
   );
 
-  for (int i = 0; (i < params.maxIterations) && (currentMip >= 0); ++i)
+  int i = 0;
+  for (; (i < params.maxIterations) && (currentMip >= params.startMip); ++i)
   {
     AdvanceRay(
       currentMip,
@@ -246,5 +287,11 @@ void main()
   float confidence = ValidateHit(currentPosSS, reflectionWS);
 
   vec3 color = confidence * GetPreviousColor(currentPosSS);
+
+  if (params.visualizeIterationCount)
+  {
+    color = vec3((float(i) / 300.0f), 0.0f, 0.0f);
+  }
+
   imageStore(out_color, texelCoords, vec4(color, 1.0f));
 }
