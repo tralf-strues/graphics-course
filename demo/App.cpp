@@ -41,7 +41,7 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  mainCam.lookAt({0.0f, 3.5f, 5.0f}, {0.0f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
+  mainCam.lookAt({0.0f, 4.0f, 6.5f}, {0.0f, 1.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
 
   dirLight.radiance = glm::vec3(1.0f) * 1.5f;
   dirLight.direction = normalize(glm::vec3(-1.0f, -10.0f, -8.0f));

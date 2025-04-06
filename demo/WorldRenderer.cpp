@@ -170,6 +170,32 @@ void WorldRenderer::loadScene(std::filesystem::path path)
   auto instancesCount = sceneMgr->getInstanceMatrices().size();
   transforms.getPrevious().resize(instancesCount);
   transforms.getCurrent().resize(instancesCount);
+
+  for (auto& material : sceneMgr->getMaterials()) {
+    if (material.name == "Material.Cube") {
+      material.albedo = glm::vec3{0.27f, 0.27f, 0.27f};
+      material.roughness = 0.37f;
+      material.metalness = 0.26f;
+    }
+
+    if (material.name == "Material.Suzanne") {
+      material.albedo = glm::vec3{1.0f, 0.123f, 0.123f};
+      material.roughness = 1.0f;
+      material.metalness = 0.0f;
+    }
+
+    if (material.name == "Material.SphereSide") {
+      material.albedo = glm::vec3{1.0f, 0.65f, 0.0f};
+      material.roughness = 0.125f;
+      material.metalness = 1.0f;
+    }
+
+    if (material.name == "Material.SphereBack") {
+      material.albedo = glm::vec3{1.0f, 1.0f, 1.0f};
+      material.roughness = 0.0f;
+      material.metalness = 0.15f;
+    }
+  }
 }
 
 void WorldRenderer::loadShaders()
@@ -975,58 +1001,55 @@ void WorldRenderer::drawGui()
 
     ImGui::Checkbox("Animate objects", &animate);
 
-    ImGui::NewLine();
-
-    ImGui::SeparatorText("TAA");
-
-    ImGui::Checkbox("Enable TAA", &enableTAA);
-    ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
-    ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
-    ImGui::Checkbox("Filter History", &filterHistory);
-    ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
-    ImGui::SliderFloat("Sharpen Multiplier", &sharpenPass.getAmount(), 0.0f, 1.0f, "%.1f");
-
-    if (newMaterialTextureMipBias != materialTextureMipBias)
+    if (ImGui::CollapsingHeader("TAA", ImGuiTreeNodeFlags_None))
     {
-      materialTextureMipBias = newMaterialTextureMipBias;
-      recreateMaterialTextureSampler();
+      ImGui::Checkbox("Enable TAA", &enableTAA);
+      ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
+      ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
+      ImGui::Checkbox("Filter History", &filterHistory);
+      ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
+      ImGui::SliderFloat("Sharpen Multiplier", &sharpenPass.getAmount(), 0.0f, 1.0f, "%.1f");
+
+      if (newMaterialTextureMipBias != materialTextureMipBias)
+      {
+        materialTextureMipBias = newMaterialTextureMipBias;
+        recreateMaterialTextureSampler();
+      }
     }
 
-    ImGui::SeparatorText("SSSR");
+    static bool enableReflections = true;
+    if (ImGui::CollapsingHeader("SSSR", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      ImGui::Checkbox("Enable SSSR", &enableReflections);
 
-    static bool enableReflections = false;
-    ImGui::Checkbox("Enable SSSR", &enableReflections);
+      ImGui::Checkbox("Show reflections only", &showJustReflections);
+      ImGui::Checkbox("Show iteration complexity", &visualizeIterationCount);
+
+      ImGui::NewLine();
+
+      ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
+      ImGui::Checkbox("Use WS hit confidence", &useWorldSpaceHitConfidence);
+
+      ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
+      ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
+      ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
+    }
     pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
 
-    ImGui::Checkbox("Show reflections only", &showJustReflections);
-    ImGui::Checkbox("Show iteration complexity", &visualizeIterationCount);
+    if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_None))
+    {
+      ImGui::Combo(
+        "Environment",
+        &environmentIdx,
+        ENVIRONMENT_NAMES.data(),
+        static_cast<int32_t>(ENVIRONMENT_NAMES.size()));
 
-    ImGui::NewLine();
-
-    ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
-    ImGui::Checkbox("Use WS hit confidence", &useWorldSpaceHitConfidence);
-
-    ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 1000);
-    ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
-    ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
-
-    ImGui::NewLine();
-
-    ImGui::SeparatorText("Environment");
-
-    ImGui::Combo(
-      "Environment",
-      &environmentIdx,
-      ENVIRONMENT_NAMES.data(),
-      static_cast<int32_t>(ENVIRONMENT_NAMES.size()));
-
-    ImGui::SliderInt(
-      "Render mip",
-      &renderEnvironmentMip,
-      0,
-      environmentManager.getPrefilteredEnvMapMips() - 1);
-
-    ImGui::NewLine();
+      ImGui::SliderInt(
+        "Render mip",
+        &renderEnvironmentMip,
+        0,
+        environmentManager.getPrefilteredEnvMapMips() - 1);
+    }
 
     if (ImGui::CollapsingHeader("Irradiance SH Coefficients", ImGuiTreeNodeFlags_None))
     {
@@ -1072,27 +1095,26 @@ void WorldRenderer::drawGui()
       }
     }
 
-    ImGui::NewLine();
-
-    ImGui::SeparatorText("Lighting");
-
     static bool enableEmission = true;
     static bool enableDiffuseIBL = true;
     static bool enableSpecularIBL = true;
-    static bool enableDirectionalLight = false;
+    static bool enableDirectionalLight = true;
     static bool enablePointLights = false;
-    ImGui::Checkbox("Enable Emission", &enableEmission);
-    ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
-    ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
-    ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
-    ImGui::Checkbox("Enable Point Lights", &enablePointLights);
+
+    if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      ImGui::Checkbox("Enable Emission", &enableEmission);
+      ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
+      ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
+      ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
+      ImGui::Checkbox("Enable Point Lights", &enablePointLights);
+    }
+
     pushConstDeferredPass.enableEmission = static_cast<shader_bool>(enableEmission);
     pushConstDeferredPass.enableDiffuseIBL = static_cast<shader_bool>(enableDiffuseIBL);
     pushConstDeferredPass.enableSpecularIBL = static_cast<shader_bool>(enableSpecularIBL);
     pushConstDeferredPass.enableDirectionalLight = static_cast<shader_bool>(enableDirectionalLight);
     pushConstDeferredPass.enablePointLights = static_cast<shader_bool>(enablePointLights);
-
-    ImGui::NewLine();
   }
 
   if (ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen))

@@ -96,7 +96,7 @@ private:
   Temporal<CameraData> cameraData;
 
   Temporal<std::vector<glm::mat4x4>> transforms;
-  bool animate = true;
+  bool animate = false;
 
   etna::Image depth;
   etna::Image gBufferAlbedo;
