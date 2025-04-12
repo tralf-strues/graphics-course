@@ -659,6 +659,7 @@ void WorldRenderer::renderWorld(
       .invProj00 = pushConstDeferredPass.invProj00,
       .invProj11 = pushConstDeferredPass.invProj11,
       .maxIterations = sssrMaxIterations,
+      .samplesPerFrame = sssrSamplesPerFrame,
       .depthThickness = sssrDepthThickness,
       .startMipLevel = startMipLevel,
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
@@ -669,7 +670,8 @@ void WorldRenderer::renderWorld(
     hizPass.getHiZ(),
     gBufferNorm,
     taaPass.getMotionVectors(),
-    taaPass.getHistory());
+    taaPass.getHistory(),
+    gBufferMetalnessRoughness);
 
   auto& deferredTarget = taaPass.getCurrentTarget();
 
@@ -1001,6 +1003,18 @@ void WorldRenderer::drawGui()
 
     ImGui::Checkbox("Animate objects", &animate);
 
+    ImGui::Combo(
+      "Environment",
+      &environmentIdx,
+      ENVIRONMENT_NAMES.data(),
+      static_cast<int32_t>(ENVIRONMENT_NAMES.size()));
+
+    ImGui::SliderInt(
+      "Render mip",
+      &renderEnvironmentMip,
+      0,
+      environmentManager.getPrefilteredEnvMapMips() - 1);
+
     if (ImGui::CollapsingHeader("TAA", ImGuiTreeNodeFlags_None))
     {
       ImGui::Checkbox("Enable TAA", &enableTAA);
@@ -1031,25 +1045,11 @@ void WorldRenderer::drawGui()
       ImGui::Checkbox("Use WS hit confidence", &useWorldSpaceHitConfidence);
 
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
+      ImGui::SliderInt("Samples per frame", &sssrSamplesPerFrame, 1, 8);
       ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
       ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
     }
     pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
-
-    if (ImGui::CollapsingHeader("Environment", ImGuiTreeNodeFlags_None))
-    {
-      ImGui::Combo(
-        "Environment",
-        &environmentIdx,
-        ENVIRONMENT_NAMES.data(),
-        static_cast<int32_t>(ENVIRONMENT_NAMES.size()));
-
-      ImGui::SliderInt(
-        "Render mip",
-        &renderEnvironmentMip,
-        0,
-        environmentManager.getPrefilteredEnvMapMips() - 1);
-    }
 
     if (ImGui::CollapsingHeader("Irradiance SH Coefficients", ImGuiTreeNodeFlags_None))
     {
@@ -1135,7 +1135,7 @@ void WorldRenderer::drawGui()
     ImGui::NewLine();
 
     ImGui::ColorEdit3("Albedo", glm::value_ptr(materials[materialIdx].albedo));
-    ImGui::SliderFloat("Roughness", &materials[materialIdx].roughness, 0.0f, 1.0f, "r = %.3f");
-    ImGui::SliderFloat("Metalness", &materials[materialIdx].metalness, 0.0f, 1.0f, "m = %.3f");
+    ImGui::SliderFloat("Roughness", &materials[materialIdx].roughness, 0.0f, 1.0f, "r = %.2f");
+    ImGui::SliderFloat("Metalness", &materials[materialIdx].metalness, 0.0f, 1.0f, "m = %.2f");
   }
 }

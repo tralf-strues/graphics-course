@@ -19,6 +19,7 @@ public:
     float invProj00;
     float invProj11;
     int32_t maxIterations;
+    int32_t samplesPerFrame;
     float depthThickness;
     int32_t startMipLevel;
     shader_bool traceBehindSurfaces;
@@ -37,7 +38,8 @@ public:
     etna::Image& hiz,
     etna::Image& gbuffer_norm,
     etna::Image& curr_motion_vectors,
-    etna::Image& prev_color);
+    etna::Image& prev_color,
+    etna::Image& gbuffer_metalness_roughness);
 
   etna::Image& getReflectionTarget();
 

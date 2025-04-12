@@ -54,7 +54,8 @@ void SSSRPass::execute(
   etna::Image& hiz,
   etna::Image& gbuffer_norm,
   etna::Image& curr_motion_vectors,
-  etna::Image& prev_color)
+  etna::Image& prev_color,
+  etna::Image& gbuffer_metalness_roughness)
 {
   ETNA_PROFILE_GPU(cmds, SSSRPass);
 
@@ -85,6 +86,14 @@ void SSSRPass::execute(
   etna::set_state(
     cmds,
     prev_color.get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::set_state(
+    cmds,
+    gbuffer_metalness_roughness.get(),
     vk::PipelineStageFlagBits2::eComputeShader,
     vk::AccessFlagBits2::eShaderSampledRead,
     vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -131,6 +140,11 @@ void SSSRPass::execute(
 
       etna::Binding(
         5,
+        gbuffer_metalness_roughness.genBinding(
+          pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal, etna::Image::ViewParams{})),
+
+      etna::Binding(
+        6,
         reflectionTarget.genBinding(nullptr, vk::ImageLayout::eGeneral, etna::Image::ViewParams{})),
     });
 

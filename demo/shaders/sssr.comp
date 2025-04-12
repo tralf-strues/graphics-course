@@ -6,6 +6,8 @@
 const int GROUP_SIZE = 8;
 
 #include "CameraData.h"
+#include "Random.glsl"
+#include "PBR.glsl"
 
 layout(set = 0, binding = 0) uniform camera_data_t
 {
@@ -16,8 +18,9 @@ layout(set = 0, binding = 1) uniform sampler2D texHiZ;
 layout(set = 0, binding = 2) uniform sampler2D texGBufferNorm;
 layout(set = 0, binding = 3) uniform sampler2D texCurrMotionVectors;
 layout(set = 0, binding = 4) uniform sampler2D texPrevColor;
+layout(set = 0, binding = 5) uniform sampler2D texMetalnessRoughness;
 
-layout(set = 0, binding = 5, rgba8) uniform writeonly image2D out_color;
+layout(set = 0, binding = 6, rgba8) uniform writeonly image2D out_color;
 
 layout(push_constant) uniform params_t
 {
@@ -30,6 +33,8 @@ layout(push_constant) uniform params_t
   float invProj11; // Precomputed coefficient, 1 / proj[1][1]
 
   int maxIterations;
+  int samplesPerFrame;
+
   float depthThickness;
 
   int startMip;
@@ -68,8 +73,39 @@ vec3 LoadNormalWS(ivec2 texel_coords)
   return normalWS;
 }
 
+vec3 GenReflection_ImportanceSampleGGX(
+  int sampleIndex,
+  float roughness,
+  vec3 v,
+  mat3 tbn
+)
+{
+  // Generating a reflection sample based on roughness.
+  // Iterating until we the reflection vector is valid, i.e.it's not below the surface.
+  // TODO: Use VNDF instead, but I don't yet understand the math behind it
+  for (int i = 0; i < 2; ++i)
+  {
+    vec2 uniformSample = Hammersley((sampleIndex + i) % 256, 256);
+
+    vec3 h = ImportanceSampleGGX(uniformSample, roughness, tbn);
+    vec3 l = 2.0f * dot(v, h) * h - v;
+
+    float NoL = clamp(dot(tbn[2], l), 0.0f, 1.0f);
+
+    if (NoL > 0.0f)
+    {
+      return l;
+    }
+  }
+
+  return vec3(0.0f);
+}
+
 void ComputePosAndReflectionSS(
   ivec2 texel_coords,
+  int sampleIndex,
+  bool mirrorReflection,
+  float roughness,
   out vec3 out_pos_ss,
   out vec3 out_reflection_ss,
   out vec3 out_reflection_ws
@@ -89,9 +125,30 @@ void ComputePosAndReflectionSS(
                                             camera.wsRight * ndcXY.x * params.invProj00 +
                                             camera.wsUp    * ndcXY.y * params.invProj11);
 
+  vec3 incidenceWS  = normalize(posWS - camera.wsPos);
+
+  vec3 reflectionWS = vec3(0.0f);
+  if (mirrorReflection)
+  {
+    reflectionWS = normalize(reflect(incidenceWS, normalWS));
+  }
+  else
+  {
+    vec3  up          = abs(normalWS.z) < 0.999f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 0.0f);
+    vec3  tangentWS   = normalize(cross(up, normalWS));
+    vec3  bitangentWS = cross(normalWS, tangentWS);
+    mat3  tbn         = mat3(tangentWS, bitangentWS, normalWS);
+
+    // Importance sample the reflection vector
+    reflectionWS = GenReflection_ImportanceSampleGGX(
+      sampleIndex,
+      roughness,
+      -incidenceWS,
+      tbn
+    );
+  }
+
   // Reflection
-  vec3 incidenceWS     = posWS - camera.wsPos;
-  vec3 reflectionWS    = normalize(reflect(incidenceWS, normalWS));
   vec3 reflectionEndWS = posWS + reflectionWS;
 
   // Transform to screen space
@@ -221,26 +278,24 @@ vec3 GetPreviousColor(vec3 posSS)
   return texture(texPrevColor, prevUV).rgb;
 }
 
-layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
-void main()
+vec4 SampleReflectionRadiance(
+  ivec2 texelCoords,
+  int sampleIndex,
+  bool mirrorReflection,
+  float roughness
+)
 {
-  ivec2 texelCoords = ivec2(gl_GlobalInvocationID.xy);
-  if (texelCoords.x >= params.resolution.x || texelCoords.y >= params.resolution.y)
-  {
-    return;
-  }
-
-  float depth = texelFetch(texHiZ, texelCoords, 0).x;
-  if (abs(depth - 1.0f) < 0.00001f)
-  {
-    imageStore(out_color, texelCoords, vec4(0.0f, 0.0f, 0.0f, 1.0f));
-    return;
-  }
-
   vec3 rayOriginSS;
   vec3 reflectionSS;
   vec3 reflectionWS;
-  ComputePosAndReflectionSS(texelCoords, rayOriginSS, reflectionSS, reflectionWS);
+  ComputePosAndReflectionSS(
+    texelCoords,
+    sampleIndex,
+    mirrorReflection,
+    roughness,
+    rayOriginSS,
+    reflectionSS,
+    reflectionWS);
 
   vec3 invReflectionSS = 1.0f / reflectionSS;
 
@@ -285,13 +340,59 @@ void main()
   }
 
   float confidence = ValidateHit(currentPosSS, reflectionWS);
-
-  vec3 color = confidence * GetPreviousColor(currentPosSS);
+  vec3 color = GetPreviousColor(currentPosSS);
 
   if (params.visualizeIterationCount)
   {
     color = vec3((float(i) / 300.0f), 0.0f, 0.0f);
+    confidence = 1.0f;
   }
 
-  imageStore(out_color, texelCoords, vec4(color, 1.0f));
+  return vec4(color, confidence);
+}
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
+void main()
+{
+  ivec2 texelCoords = ivec2(gl_GlobalInvocationID.xy);
+  if (texelCoords.x >= params.resolution.x || texelCoords.y >= params.resolution.y)
+  {
+    return;
+  }
+
+  float depth = texelFetch(texHiZ, texelCoords, 0).x;
+  if (abs(depth - 1.0f) < 0.00001f)
+  {
+    imageStore(out_color, texelCoords, vec4(0.0f));
+    return;
+  }
+
+  float roughness = texelFetch(texMetalnessRoughness, texelCoords, 0).g;
+  bool mirrorReflection = roughness <= 0.001f;
+
+  vec4 result = vec4(0.0f);
+  if (mirrorReflection)
+  {
+    // Handle almost mirror-like surfaces
+    result = SampleReflectionRadiance(texelCoords, 0, true, roughness);
+  }
+  else
+  {
+    // Handle glossy surfaces
+    int sampleIndex = texelCoords.x * 17 + texelCoords.y * 71;
+    float totalWeight = 0.0f;
+    for (int i = 0; i < params.samplesPerFrame; ++i)
+    {
+      sampleIndex = (sampleIndex + i * params.samplesPerFrame * 13) % 256;
+
+      vec4 reflectionColor = SampleReflectionRadiance(texelCoords, sampleIndex, false, roughness);
+      result.rgb += reflectionColor.rgb * reflectionColor.a;
+      totalWeight += reflectionColor.a;
+      result.a = max(reflectionColor.a, result.a);
+    }
+
+    result.rgb /= totalWeight;
+  }
+
+  imageStore(out_color, texelCoords, result);
 }

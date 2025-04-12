@@ -135,6 +135,7 @@ private:
   /* SSSR */
   SSSRPass sssrPass;
   int32_t sssrMaxIterations = 100;
+  int32_t sssrSamplesPerFrame = 1;
   float sssrDepthThickness = 0.0001f;
   bool showJustReflections = false;
   int32_t startMipLevel = 0;
