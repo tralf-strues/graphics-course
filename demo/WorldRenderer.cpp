@@ -126,13 +126,15 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   /* Geometry Pass */
-  depth = ctx.createImage(etna::Image::CreateInfo{
-    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "depth",
-    .format = vk::Format::eD32Sfloat,
-    .imageUsage =
-      vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-  });
+  for (size_t i = 0; i < depth.size(); ++i)
+  {
+    depth[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "depth[" + std::to_string(i) + "]",
+      .format = vk::Format::eD32Sfloat,
+      .imageUsage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+    });
+  }
 
   gBufferAlbedo = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
@@ -148,12 +150,15 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
 
-  gBufferNorm = ctx.createImage(etna::Image::CreateInfo{
-    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "gBufferNorm",
-    .format = GBUFFER_NORM_FORMAT,
-    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
-  });
+  for (size_t i = 0; i < gBufferNorm.size(); ++i)
+  {
+    gBufferNorm[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "gBufferNorm[" + std::to_string(i) + "]",
+      .format = GBUFFER_NORM_FORMAT,
+      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    });
+  }
 }
 
 void WorldRenderer::loadScene(std::filesystem::path path)
@@ -173,9 +178,9 @@ void WorldRenderer::loadScene(std::filesystem::path path)
 
   for (auto& material : sceneMgr->getMaterials()) {
     if (material.name == "Material.Cube") {
-      material.albedo = glm::vec3{0.27f, 0.27f, 0.27f};
-      material.roughness = 0.37f;
-      material.metalness = 0.26f;
+      material.albedo = glm::vec3{0.68f, 0.68f, 0.68f};
+      material.roughness = 0.15f;
+      material.metalness = 0.75f;
     }
 
     if (material.name == "Material.Suzanne") {
@@ -392,6 +397,12 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.proj = proj;
     mainCamera.projView = proj * mainCamera.view;
+
+    mainCamera.proj22 = proj[2][2];
+    mainCamera.proj23 = proj[3][2];
+    mainCamera.invProj00 = 1.0f / proj[0][0];
+    mainCamera.invProj11 = 1.0f / proj[1][1];
+
     mainCamera.wsPos = packet.mainCam.position;
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();
@@ -401,11 +412,6 @@ void WorldRenderer::update(const FramePacket& packet)
 
     std::memcpy(currCameraBuffer.get().data(), &cameraData.getCurrent(), sizeof(CameraData));
     std::memcpy(prevCameraBuffer.get().data(), &cameraData.getPrevious(), sizeof(CameraData));
-
-    pushConstDeferredPass.proj22 = proj[2][2];
-    pushConstDeferredPass.proj23 = proj[3][2];
-    pushConstDeferredPass.invProj00 = 1.0f / proj[0][0];
-    pushConstDeferredPass.invProj11 = 1.0f / proj[1][1];
   }
 
   // update transforms
@@ -562,6 +568,12 @@ void WorldRenderer::renderWorld(
 {
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
+  if (invalidateSSSR)
+  {
+    sssrPass.invalidate(cmd_buf);
+    invalidateSSSR = false;
+  }
+
   auto& environment = environmentManager.getEnvironments()[environmentIdx];
 
   // Shadow Pass
@@ -623,8 +635,8 @@ void WorldRenderer::renderWorld(
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         },
         {
-          .image = gBufferNorm.get(),
-          .view = gBufferNorm.getView({}),
+          .image = gBufferNorm.getCurrent().get(),
+          .view = gBufferNorm.getCurrent().getView({}),
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         },
         {
@@ -634,7 +646,7 @@ void WorldRenderer::renderWorld(
         },
       },
 
-      {.image = depth.get(), .view = depth.getView({})});
+      {.image = depth.getCurrent().get(), .view = depth.getCurrent().getView({})});
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, geometryPassPipeline.getVkPipeline());
     cmd_buf.bindDescriptorSets(
@@ -647,33 +659,35 @@ void WorldRenderer::renderWorld(
     renderScene(cmd_buf, geometryPassInfo, true);
   }
 
-  hizPass.execute(cmd_buf, depth);
+  hizPass.execute(cmd_buf, depth.getCurrent());
 
   sssrPass.execute(
     cmd_buf,
     SSSRPass::Params{
       .resolution = pushConstDeferredPass.resolution,
       .invResolution = pushConstDeferredPass.invResolution,
-      .proj22 = pushConstDeferredPass.proj22,
-      .proj23 = pushConstDeferredPass.proj23,
-      .invProj00 = pushConstDeferredPass.invProj00,
-      .invProj11 = pushConstDeferredPass.invProj11,
+      .envMapMips = static_cast<uint32_t>(environmentManager.getPrefilteredEnvMapMips()),
       .maxIterations = sssrMaxIterations,
-      .samplesPerFrame = sssrSamplesPerFrame,
+      .frameIdx = static_cast<uint32_t>(etna::get_context().getMainWorkCount().batchIndex()),
       .depthThickness = sssrDepthThickness,
+      .roughnessThreshold = sssrRoughnessThreshold,
       .startMipLevel = startMipLevel,
+      .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
-      .useWorldSpaceHitConfidence = static_cast<shader_bool>(useWorldSpaceHitConfidence),
       .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
     },
+    prevCameraBuffer.get(),
     currCameraBuffer.get(),
     hizPass.getHiZ(),
+    depth.getPrevious(),
     gBufferNorm,
     taaPass.getMotionVectors(),
     taaPass.getHistory(),
-    gBufferMetalnessRoughness);
+    gBufferMetalnessRoughness,
+    environment.prefilteredEnvMap);
 
   auto& deferredTarget = taaPass.getCurrentTarget();
+  auto& reflectionTarget = sssrPass.getReflectionTarget();
 
   // Deferred Pass
   {
@@ -705,7 +719,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      gBufferNorm.get(),
+      gBufferNorm.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -713,7 +727,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      depth.get(),
+      depth.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -729,7 +743,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      sssrPass.getReflectionTarget().get(),
+      reflectionTarget.get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -758,9 +772,13 @@ void WorldRenderer::renderWorld(
           gBufferMetalnessRoughness.genBinding(
             pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
-          3, gBufferNorm.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          3,
+          gBufferNorm.getCurrent().genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
-          4, depth.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          4,
+          depth.getCurrent().genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
           5, shadowMap.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
@@ -782,8 +800,7 @@ void WorldRenderer::renderWorld(
             linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
           8,
-          sssrPass.getReflectionTarget().genBinding(
-            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          reflectionTarget.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
         etna::Binding(9, shadowCameraBuffer.get().genBinding()),
         etna::Binding(10, lightBuffer.get().genBinding()),
@@ -846,7 +863,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      depth.get(),
+      depth.getCurrent().get(),
       vk::PipelineStageFlagBits2::eEarlyFragmentTests,
       vk::AccessFlagBits2::eDepthStencilAttachmentRead |
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -866,8 +883,8 @@ void WorldRenderer::renderWorld(
       }},
 
       {
-        .image = depth.get(),
-        .view = depth.getView({}),
+        .image = depth.getCurrent().get(),
+        .view = depth.getCurrent().getView({}),
         .loadOp = vk::AttachmentLoadOp::eLoad,
       });
 
@@ -897,7 +914,7 @@ void WorldRenderer::renderWorld(
   taaPass.resolve(cmd_buf, filterHistory);
   sharpenPass.execute(cmd_buf, resolveTarget, pointSampler);
 
-  auto& blitSrc = showJustReflections ? sssrPass.getReflectionTarget() : sharpenPass.getTarget();
+  auto& blitSrc = showJustReflections ? reflectionTarget : sharpenPass.getTarget();
 
   // Blit from target to swapchain image
   {
@@ -971,13 +988,13 @@ void WorldRenderer::renderWorld(
       case DebugPreviewShadowMap:
         return &shadowMap;
       case DebugPreviewDepth:
-        return &depth;
+        return &depth.getCurrent();
       case DebugPreviewGBufferAlbedo:
         return &gBufferAlbedo;
       case DebugPreviewGBufferMetalnessRoughness:
         return &gBufferMetalnessRoughness;
       case DebugPreviewGBufferNorm:
-        return &gBufferNorm;
+        return &gBufferNorm.getCurrent();
       default:
         return nullptr;
       }
@@ -993,6 +1010,8 @@ void WorldRenderer::renderWorld(
 
   cameraData.proceed();
   transforms.proceed();
+  gBufferNorm.proceed();
+  depth.proceed();
 }
 
 void WorldRenderer::drawGui()
@@ -1039,14 +1058,19 @@ void WorldRenderer::drawGui()
       ImGui::Checkbox("Show reflections only", &showJustReflections);
       ImGui::Checkbox("Show iteration complexity", &visualizeIterationCount);
 
+      if (ImGui::Button("Invalidate History"))
+      {
+        invalidateSSSR = true;
+      }
+
       ImGui::NewLine();
 
+      ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
       ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
-      ImGui::Checkbox("Use WS hit confidence", &useWorldSpaceHitConfidence);
 
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
-      ImGui::SliderInt("Samples per frame", &sssrSamplesPerFrame, 1, 8);
       ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
+      ImGui::SliderFloat("Roughness threshold", &sssrRoughnessThreshold, 0.0f, 1.0f, "%.2f");
       ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
     }
     pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
@@ -1128,7 +1152,7 @@ void WorldRenderer::drawGui()
       materialNames.push_back(material.name.c_str());
     }
 
-    static int32_t materialIdx = 0;
+    static int32_t materialIdx = static_cast<int32_t>(materialNames.size()) - 1;
     ImGui::Combo(
       "Material", &materialIdx, materialNames.data(), static_cast<int32_t>(materialNames.size()));
 

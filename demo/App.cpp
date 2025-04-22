@@ -41,7 +41,7 @@ App::App()
   // pass it implicitly here instead of explicitly. Beware if trying to do something tricky.
   ImGuiRenderer::enableImGuiForWindow(mainWindow->native());
 
-  mainCam.lookAt({0.0f, 4.0f, 6.5f}, {0.0f, 1.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
+  mainCam.lookAt({0.0f, 2.75f, 6.0f}, {0.0f, 1.5f, 0.0f}, {0.0f, 1.0f, 0.0f});
 
   dirLight.radiance = glm::vec3(1.0f) * 1.5f;
   dirLight.direction = normalize(glm::vec3(-1.0f, -10.0f, -8.0f));
@@ -100,7 +100,7 @@ void App::processInput(float dt)
   if (is_held_down(mainWindow->keyboard[KeyboardKey::kLeftShift]))
     camMoveSpeed = 10;
   else
-    camMoveSpeed = 1;
+    camMoveSpeed = 3;
 
   if (mainWindow->mouse[MouseButton::mbRight] == ButtonState::Rising)
     mainWindow->captureMouse = !mainWindow->captureMouse;

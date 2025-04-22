@@ -7,6 +7,9 @@
 
 #include "cpp_glsl_compat.h"
 
+#include "Temporal.hpp"
+
+
 class SSSRPass
 {
 public:
@@ -14,16 +17,14 @@ public:
   {
     glm::uvec2 resolution;
     glm::vec2 invResolution;
-    float proj22;
-    float proj23;
-    float invProj00;
-    float invProj11;
+    uint32_t envMapMips;
     int32_t maxIterations;
-    int32_t samplesPerFrame;
+    uint32_t frameIdx;
     float depthThickness;
+    float roughnessThreshold;
     int32_t startMipLevel;
+    shader_bool useTemporalAccumulation;
     shader_bool traceBehindSurfaces;
-    shader_bool useWorldSpaceHitConfidence;
     shader_bool visualizeIterationCount;
   };
 
@@ -34,12 +35,18 @@ public:
   void execute(
     vk::CommandBuffer cmd_buf,
     const Params& params,
-    etna::Buffer& camera_buffer,
+    etna::Buffer& prev_camera_buffer,
+    etna::Buffer& curr_camera_buffer,
     etna::Image& hiz,
-    etna::Image& gbuffer_norm,
+    etna::Image& prev_depth,
+    Temporal<etna::Image>& gbuffer_norm,
     etna::Image& curr_motion_vectors,
     etna::Image& prev_color,
-    etna::Image& gbuffer_metalness_roughness);
+    etna::Image& gbuffer_metalness_roughness,
+    const etna::Image& prefiltered_environment_map
+  );
+
+  void invalidate(vk::CommandBuffer cmd_buf);
 
   etna::Image& getReflectionTarget();
 
@@ -50,8 +57,9 @@ private:
   etna::ComputePipeline pipeline;
   etna::Sampler pointSampler;
   etna::Sampler linearSampler;
+  etna::Sampler linearSamplerRepeat;
 
-  etna::Image reflectionTarget;
+  Temporal<etna::Image> reflectionTarget;
 
   glm::uvec2 resolution;
 };

@@ -98,10 +98,10 @@ private:
   Temporal<std::vector<glm::mat4x4>> transforms;
   bool animate = false;
 
-  etna::Image depth;
+  Temporal<etna::Image> depth;
   etna::Image gBufferAlbedo;
   etna::Image gBufferMetalnessRoughness;
-  etna::Image gBufferNorm;
+  Temporal<etna::Image> gBufferNorm;
 
   /* Deferred Pass */
   etna::ComputePipeline deferredPassPipeline;
@@ -111,11 +111,6 @@ private:
   struct PushConstantDeferredPass {
     glm::uvec2 resolution;
     glm::vec2 invResolution;
-
-    float proj22;
-    float proj23;
-    float invProj00;
-    float invProj11;
 
     uint32_t envMapMips;
     shader_bool enableEmission;
@@ -135,13 +130,15 @@ private:
   /* SSSR */
   SSSRPass sssrPass;
   int32_t sssrMaxIterations = 100;
-  int32_t sssrSamplesPerFrame = 1;
   float sssrDepthThickness = 0.0001f;
+  float sssrRoughnessThreshold = 0.4f;
   bool showJustReflections = false;
   int32_t startMipLevel = 0;
+  bool useTemporalAccumulation = true;
   bool traceBehindSurfaces = false;
-  bool useWorldSpaceHitConfidence = false;
   bool visualizeIterationCount = false;
+
+  bool invalidateSSSR = true;
 
   /* TAA */
   TAAPass taaPass;
