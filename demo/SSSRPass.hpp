@@ -24,6 +24,7 @@ public:
     float roughnessThreshold;
     int32_t startMipLevel;
     shader_bool useTemporalAccumulation;
+    shader_bool useFilter;
     shader_bool traceBehindSurfaces;
     shader_bool visualizeIterationCount;
   };
@@ -54,12 +55,21 @@ private:
   static constexpr size_t GROUP_SIZE = 8;
 
 private:
-  etna::ComputePipeline pipeline;
   etna::Sampler pointSampler;
   etna::Sampler linearSampler;
   etna::Sampler linearSamplerRepeat;
 
-  Temporal<etna::Image> reflectionTarget;
+  etna::ComputePipeline reflectPipeline;
+  etna::ComputePipeline taPipeline;
+  etna::ComputePipeline filterPipeline;
+
+  // Temporal<etna::Image> reflectionTarget;
+
+  etna::Image reflectTargetReflection;
+  etna::Image reflectTargetReprojectionUV;
+
+  etna::Image taTarget;
+  etna::Image filterTarget;
 
   glm::uvec2 resolution;
 };

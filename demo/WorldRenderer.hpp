@@ -135,6 +135,7 @@ private:
   bool showJustReflections = false;
   int32_t startMipLevel = 0;
   bool useTemporalAccumulation = true;
+  bool useFilter = true;
   bool traceBehindSurfaces = false;
   bool visualizeIterationCount = false;
 

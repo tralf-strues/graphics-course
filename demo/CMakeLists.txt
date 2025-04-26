@@ -30,6 +30,8 @@ target_add_shaders(demo
   shaders/hiz.comp
   shaders/prefilter_envmap.comp
   shaders/sharpen.comp
-  shaders/sssr.comp
+  shaders/sssr_reflect.comp
+  shaders/sssr_ta.comp
+  shaders/sssr_filter.comp
   shaders/taa_resolve.comp
 )

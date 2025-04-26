@@ -5,9 +5,7 @@
 
 const int GROUP_SIZE = 8;
 
-#include "CameraData.h"
-#include "Random.glsl"
-#include "PBR.glsl"
+#include "sssr_common.glsl"
 
 layout(set = 0, binding = 0) uniform prev_camera_data_t
 {
@@ -21,44 +19,16 @@ layout(set = 0, binding = 1) uniform curr_camera_data_t
 
 layout(set = 0, binding = 2) uniform sampler2D texHiZ;
 layout(set = 0, binding = 3) uniform sampler2D texPrevDepth;
-layout(set = 0, binding = 4) uniform sampler2D texPrevGBufferNorm;
-layout(set = 0, binding = 5) uniform sampler2D texCurrGBufferNorm;
-layout(set = 0, binding = 6) uniform sampler2D texCurrMotionVectors;
-layout(set = 0, binding = 7) uniform sampler2D texPrevColor;
-layout(set = 0, binding = 8) uniform sampler2D texMetalnessRoughness;
-layout(set = 0, binding = 9) uniform samplerCube texPrefilteredEnvMap;
-layout(set = 0, binding = 10) uniform sampler2D texHistory;
+layout(set = 0, binding = 4) uniform sampler2D texCurrGBufferNorm;
+layout(set = 0, binding = 5) uniform sampler2D texCurrMotionVectors;
+layout(set = 0, binding = 6) uniform sampler2D texPrevColor;
+layout(set = 0, binding = 7) uniform sampler2D texMetalnessRoughness;
+layout(set = 0, binding = 8) uniform samplerCube texPrefilteredEnvMap;
 
-layout(set = 0, binding = 11, rgba8) uniform writeonly image2D out_color;
-
-layout(push_constant) uniform params_t
-{
-  ivec2 resolution;
-  vec2 invResolution;
-
-  uint envMapMips;
-  int maxIterations;
-
-  uint frameIdx;
-
-  float depthThickness;
-  float roughnessThreshold;
-
-  int startMip;
-  bool useTemporalAccumulation;
-  bool traceBehindSurfaces;
-  bool visualizeIterationCount;
-} params;
+layout(set = 0, binding = 9, rgba8) uniform writeonly image2D out_reflectionConfidence;
+layout(set = 0, binding = 10, rg16f) uniform writeonly image2D out_reprojectionUV;
 
 uint rngState = 0;
-
-vec3 LoadNormal(sampler2D texNorm, vec2 uv)
-{
-  vec3 normalWS = texture(texNorm, uv).xyz;
-  normalWS = normalize(255.0f / 127.0f * normalWS - 128.0f / 127.0f);
-
-  return normalWS;
-}
 
 vec3 ConvertScreenToPreviousScreen(vec3 currentPosSS)
 {
@@ -76,14 +46,13 @@ vec3 ConvertScreenToPreviousScreen(vec3 currentPosSS)
   return vec3(prevUV, prevDepth);
 }
 
-vec3 ReprojectReflectionRayOrigin(vec3 originSS, vec3 originWS, vec3 hitSS, vec3 hitWS)
+vec2 ReprojectReflectionRayOrigin(vec3 originSS, vec3 originWS, vec3 hitSS, vec3 hitWS)
 {
   /* -------- Simple motion vector solution -------- */
   // vec2 currentUV = originSS.xy;
   // vec2 currentMotionVector = texture(texCurrMotionVectors, currentUV).xy;
   // vec2 prevUV = currentUV + currentMotionVector;
-  // float prevDepth = texture(texPrevDepth, prevUV).r;
-  // return vec3(prevUV, prevDepth);
+  // return prevUV;
 
   /* -------- EA/AMD solution -------- */
   float mirrorRayLength = length(originWS - currCamera.wsPos) + length(hitWS - originWS);
@@ -92,8 +61,7 @@ vec3 ReprojectReflectionRayOrigin(vec3 originSS, vec3 originWS, vec3 hitSS, vec3
   vec3 mirroredHitWS = currCamera.wsPos + mirrorRayDirection * mirrorRayLength;
   vec3 prevMirroredHitSS = ConvertWorldToScreen(prevCamera, mirroredHitWS);
 
-  vec3 prevRayOriginSS = vec3(prevMirroredHitSS.xy, texture(texPrevDepth, prevMirroredHitSS.xy).r);
-  return prevRayOriginSS;
+  return prevMirroredHitSS.xy;
 }
 
 vec3 GenReflection_ImportanceSampleGGX(float roughness, vec3 v, mat3 tbn)
@@ -117,16 +85,6 @@ vec3 GenReflection_ImportanceSampleGGX(float roughness, vec3 v, mat3 tbn)
   }
 
   return vec3(0.0f);
-}
-
-mat3 ConstructTBN(vec3 normalWS)
-{
-  vec3 up          = abs(normalWS.z) < 0.999f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3 tangentWS   = normalize(cross(up, normalWS));
-  vec3 bitangentWS = cross(normalWS, tangentWS);
-  mat3 tbn         = mat3(tangentWS, bitangentWS, normalWS);
-
-  return tbn;
 }
 
 void InitialAdvanceRay(
@@ -300,21 +258,19 @@ void main()
   float depth = texelFetch(texHiZ, texelCoords, 0).x;
   if (abs(depth - 1.0f) < 0.00001f)
   {
-    imageStore(out_color, texelCoords, vec4(0.0f));
+    imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
     return;
   }
 
   float roughness = texelFetch(texMetalnessRoughness, texelCoords, 0).g;
-  if (roughness >= params.roughnessThreshold)
+  if (!CheckRoughnessThreshold(roughness))
   {
-    imageStore(out_color, texelCoords, vec4(0.0f));
+    imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
     return;
   }
 
-  bool mirrorReflection = roughness <= 0.001f;
-
   vec2 uv = (vec2(texelCoords) + 0.5f) * params.invResolution;
-  vec3 normalWS = LoadNormal(texCurrGBufferNorm, uv);
+  vec3 normalWS = LoadNormal(texCurrGBufferNorm, texelCoords);
 
   vec3 posSS = vec3(uv, depth);
 
@@ -325,9 +281,10 @@ void main()
   vec3 incidenceWS  = normalize(posWS - currCamera.wsPos);
 
   vec4 resultColor = vec4(0.0f);
+  vec2 reprojectionUV = vec2(0.0f);
   int iterationCount = 0;
 
-  if (mirrorReflection)
+  if (MirrorReflection(roughness))
   {
     vec3 reflectionWS = normalize(reflect(incidenceWS, normalWS));
     vec3 reflectionSS = ConvertDirectionWorldToScreen(currCamera, posWS, posSS, reflectionWS);
@@ -363,17 +320,6 @@ void main()
     vec3 reflectionColor = texture(texPrevColor, ConvertScreenToPreviousScreen(hitSS).xy).rgb;
     float confidence = ValidateHit(hitSS, hitWS, reflectionWS);
 
-    // Load temporal history in case of no disocclusion
-    vec3 historyPosSS = ReprojectReflectionRayOrigin(posSS, posWS, hitSS, hitWS);
-    vec3 historyNormal = LoadNormal(texPrevGBufferNorm, historyPosSS.xy);
-    vec4 historyColor = vec4(0.0f);
-    if (all(lessThan(historyPosSS.xy, vec2(1.0f))) &&
-        all(greaterThan(historyPosSS.xy, vec2(0.0f))) &&
-        CheckNoDisocclusion(historyNormal, normalWS, historyPosSS.z, depth))
-    {
-      historyColor = texture(texHistory, historyPosSS.xy);
-    }
-
     // Sample environment map as a fallback
     float smoothness = clamp(1.0f - roughness, 0.0f, 1.0f);
     float lerpFactor = smoothness * (sqrt(smoothness) + roughness);
@@ -385,11 +331,11 @@ void main()
     // Mix the reflection color with the fallback based on confidence
     reflectionColor = mix(environmentFallback, reflectionColor, confidence);
 
-    // Temporal accumulation
-    resultColor.rgb = (historyColor.a == 1.0f) && params.useTemporalAccumulation
-                      ? mix(reflectionColor, historyColor.rgb, 0.9f)
-                      : reflectionColor;
+    resultColor.rgb = reflectionColor;
     resultColor.a = 1.0f;
+
+    // Get reprojection UV
+    reprojectionUV = ReprojectReflectionRayOrigin(posSS, posWS, hitSS, hitWS);
   }
 
   if (params.visualizeIterationCount)
@@ -397,5 +343,6 @@ void main()
     resultColor = vec4((float(iterationCount) / 300.0f), 0.0f, 0.0f, 0.0f);
   }
 
-  imageStore(out_color, texelCoords, resultColor);
+  imageStore(out_reflectionConfidence, texelCoords, resultColor);
+  imageStore(out_reprojectionUV, texelCoords, vec4(reprojectionUV, 0.0f, 0.0f));
 }

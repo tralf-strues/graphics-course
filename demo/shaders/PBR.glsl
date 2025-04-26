@@ -125,4 +125,14 @@ vec3 ImportanceSampleGGX(vec2 uniformSample, float roughness, mat3 tbn) {
   return tbn * h;
 }
 
+mat3 ConstructTBN(vec3 normalWS)
+{
+  vec3 up          = abs(normalWS.z) < 0.999f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 0.0f);
+  vec3 tangentWS   = normalize(cross(up, normalWS));
+  vec3 bitangentWS = cross(normalWS, tangentWS);
+  mat3 tbn         = mat3(tangentWS, bitangentWS, normalWS);
+
+  return tbn;
+}
+
 #endif // PBR_GLSL_INCLUDED

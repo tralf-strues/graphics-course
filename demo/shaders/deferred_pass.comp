@@ -115,8 +115,7 @@ void main()
   point.f0        = vec3(0.04f);
   point.f0        = mix(point.f0, point.albedo, point.metalness);
   point.position  = ConvertScreenToWorld(camera, vec3(uv, depth));
-  point.normal    = texture(gbufferWsNorm, uv).xyz;
-  point.normal    = normalize(255.0f / 127.0f * point.normal - 128.0f / 127.0f);
+  point.normal    = LoadNormal(gbufferWsNorm, uv);
   point.toCam     = normalize(camera.wsPos - point.position);
 
   /* Lighting */

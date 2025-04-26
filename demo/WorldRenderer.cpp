@@ -673,6 +673,7 @@ void WorldRenderer::renderWorld(
       .roughnessThreshold = sssrRoughnessThreshold,
       .startMipLevel = startMipLevel,
       .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
+      .useFilter = static_cast<shader_bool>(useFilter),
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
       .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
     },
@@ -1066,6 +1067,7 @@ void WorldRenderer::drawGui()
       ImGui::NewLine();
 
       ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
+      ImGui::Checkbox("Filter", &useFilter);
       ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
 
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);

@@ -1,0 +1,128 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
+
+#include "sssr_common.glsl"
+
+const int GROUP_SIZE         = 8;
+const int SAMPLE_BORDER      = 3;
+const int SAMPLE_WINDOW_SIZE = GROUP_SIZE + 2 * SAMPLE_BORDER;
+
+layout(set = 0, binding = 0) uniform sampler2D texHiZ;
+layout(set = 0, binding = 1) uniform sampler2D texPrevDepth;
+layout(set = 0, binding = 2) uniform sampler2D texPrevGBufferNorm;
+layout(set = 0, binding = 3) uniform sampler2D texCurrGBufferNorm;
+layout(set = 0, binding = 4) uniform sampler2D texMetalnessRoughness;
+layout(set = 0, binding = 5) uniform sampler2D texHistory;
+layout(set = 0, binding = 6) uniform sampler2D texReflectionConfidence;
+layout(set = 0, binding = 7) uniform sampler2D texReprojectionUV;
+
+layout(set = 0, binding = 8, rgba8) uniform writeonly image2D out_reflectionConfidence;
+
+struct SharedData
+{
+  vec4 reflectionConfidence;
+};
+
+shared SharedData sharedData[SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE];
+
+/* Load samples of current texture for history neighbor clipping */
+void LoadShared()
+{
+  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - SAMPLE_BORDER;
+
+  int threadIdx = int(gl_LocalInvocationIndex);
+  for (int idx = threadIdx; idx < SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE; idx += GROUP_SIZE * GROUP_SIZE)
+  {
+    ivec2 sampleCoord = sampleWindowUpperLeftCoord + ivec2(idx % SAMPLE_WINDOW_SIZE, idx / SAMPLE_WINDOW_SIZE);
+    sampleCoord = clamp(sampleCoord, ivec2(0), params.resolution - 1);
+    sharedData[idx].reflectionConfidence = texelFetch(texReflectionConfidence, sampleCoord, 0);
+  }
+
+  barrier();
+}
+
+bool CheckNoDisocclusion(vec3 historyNormal, vec3 currentNormal, float historyDepth, float depth)
+{
+  return (dot(historyNormal, currentNormal) > 0.999f) && (abs(historyDepth - depth) < 0.0001f);
+}
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
+void main()
+{
+  ivec2 texelCoords = ivec2(gl_GlobalInvocationID.xy);
+
+  LoadShared();
+
+  if (texelCoords.x >= params.resolution.x || texelCoords.y >= params.resolution.y)
+  {
+    return;
+  }
+
+  float roughness = texelFetch(texMetalnessRoughness, texelCoords, 0).g;
+  if (!CheckRoughnessThreshold(roughness))
+  {
+    imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
+    return;
+  }
+
+  ivec2 localCoord = ivec2(gl_LocalInvocationID.xy) + SAMPLE_BORDER;
+  int localIdx = localCoord.y * SAMPLE_WINDOW_SIZE + localCoord.x;
+
+  vec4 reflectionConfidence = sharedData[localIdx].reflectionConfidence;
+
+  if (MirrorReflection(roughness))
+  {
+    imageStore(out_reflectionConfidence, texelCoords, reflectionConfidence);
+    return;
+  }
+
+  float depth = texelFetch(texHiZ, texelCoords, 0).x;
+  vec3 normalWS = LoadNormal(texCurrGBufferNorm, texelCoords);
+
+  /* Load history */
+  vec2 historyUV = texelFetch(texReprojectionUV, texelCoords, 0).rg;
+  float historyDepth = texture(texPrevDepth, historyUV).r;
+  vec3 historyNormal = LoadNormal(texPrevGBufferNorm, historyUV);
+
+  vec4 historyReflection = vec4(0.0f);
+
+  if (all(lessThan(historyUV, vec2(1.0f))) &&
+      all(greaterThan(historyUV, vec2(0.0f))) &&
+      CheckNoDisocclusion(historyNormal, normalWS, historyDepth, depth))
+  {
+    historyReflection = texture(texHistory, historyUV);
+
+    /* Neighborhood clamping */
+    vec3 minColor = vec3(9999.0f);
+    vec3 maxColor = vec3(-9999.0f);
+    for (int x = -SAMPLE_BORDER; x <= SAMPLE_BORDER; ++x)
+    {
+      for (int y = -SAMPLE_BORDER; y <= SAMPLE_BORDER; ++y)
+      {
+        ivec2 localCoord = ivec2(gl_LocalInvocationID.xy) + ivec2(x, y) + SAMPLE_BORDER;
+        int idx = localCoord.y * SAMPLE_WINDOW_SIZE + localCoord.x;
+
+        vec4 neighborReflectionConfidence = sharedData[idx].reflectionConfidence;
+        if (neighborReflectionConfidence.a > 0.0001f)
+        {
+          minColor = min(minColor, neighborReflectionConfidence.rgb);
+          maxColor = max(maxColor, neighborReflectionConfidence.rgb);
+        }
+      }
+    }
+
+    historyReflection = texture(texHistory, historyUV);
+    historyReflection.rgb = clamp(historyReflection.rgb, minColor, maxColor);
+  }
+
+  /* Temporal accumulation */
+  vec3 taReflection = (historyReflection.a == 1.0f) && params.useTemporalAccumulation
+                      ? mix(reflectionConfidence.rgb, historyReflection.rgb, 0.9f)
+                      : reflectionConfidence.rgb;
+
+  float taConfidence = max(reflectionConfidence.a, historyReflection.a);
+
+  imageStore(out_reflectionConfidence, texelCoords, vec4(taReflection, taConfidence));
+}

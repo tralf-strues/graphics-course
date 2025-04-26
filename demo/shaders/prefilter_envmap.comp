@@ -24,10 +24,7 @@ vec3 PrefilterEnvMap(float roughness, vec3 r) {
   vec3 n = r;
   vec3 v = r;
 
-  vec3  up        = abs(n.z) < 0.999f ? vec3(0.0f, 0.0f, 1.0f) : vec3(1.0f, 0.0f, 0.0f);
-  vec3  tangent   = normalize(cross(up, n));
-  vec3  bitangent = cross(n, tangent);
-  mat3  tbn       = mat3(tangent, bitangent, n);
+  mat3 tbn = ConstructTBN(n);
 
   vec3  Ls        = vec3(0.0f);
   float weight    = 0.0f; // The weighting is basically a hack by Epic Games to make it look better
