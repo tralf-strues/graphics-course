@@ -688,6 +688,7 @@ void WorldRenderer::renderWorld(
       .startMipLevel = useHalfResolution ? 1 : 0,
       .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
       .useFilter = static_cast<shader_bool>(useFilter),
+      .useTemporalVariance = static_cast<shader_bool>(useTemporalVariance),
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
       .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
     },
@@ -1088,6 +1089,7 @@ void WorldRenderer::drawGui()
       ImGui::Checkbox("Half resolution", &useHalfResolution);
       ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
       ImGui::Checkbox("Filter", &useFilter);
+      ImGui::Checkbox("Use temporal variance", &useTemporalVariance);
       ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
 
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);

@@ -15,4 +15,9 @@ vec3 LoadNormal(sampler2D texNorm, vec2 uv)
   return normalWS;
 }
 
+float Luminance(vec3 color)
+{
+  return max(dot(color, vec3(0.299f, 0.587f, 0.114f)), 0.001f);
+}
+
 #endif // COMMON_GLSL_INCLUDED

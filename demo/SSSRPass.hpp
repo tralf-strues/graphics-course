@@ -27,6 +27,7 @@ public:
     int32_t startMipLevel;
     shader_bool useTemporalAccumulation;
     shader_bool useFilter;
+    shader_bool useTemporalVariance;
     shader_bool traceBehindSurfaces;
     shader_bool visualizeIterationCount;
   };
@@ -65,11 +66,11 @@ private:
   etna::ComputePipeline taPipeline;
   etna::ComputePipeline filterPipeline;
 
-  // Temporal<etna::Image> reflectionTarget;
-
   etna::Image reflectTargetReflection;
   etna::Image reflectTargetReprojectionUV;
 
   etna::Image taTarget;
+  Temporal<etna::Image> temporalVariance;
+
   etna::Image filterTarget;
 };

@@ -74,8 +74,7 @@ void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "SSSRPass::reflectTargetReflection",
     .format = vk::Format::eR8G8B8A8Unorm,
-    .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
-      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst,
+    .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
   });
 
   reflectTargetReprojectionUV = ctx.createImage(etna::Image::CreateInfo{
@@ -91,6 +90,17 @@ void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
     .format = vk::Format::eR8G8B8A8Unorm,
     .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
   });
+
+  for (size_t i = 0; i < temporalVariance.size(); ++i)
+  {
+    temporalVariance[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "SSSRPass::temporalVariance[" + std::to_string(i) + "]",
+      .format = vk::Format::eR16Unorm,
+      .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
+        vk::ImageUsageFlagBits::eTransferDst,
+    });
+  }
 
   filterTarget = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
@@ -279,7 +289,23 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
+      temporalVariance.getPrevious().get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmds,
       taTarget.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderStorageWrite,
+      vk::ImageLayout::eGeneral,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmds,
+      temporalVariance.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderStorageWrite,
       vk::ImageLayout::eGeneral,
@@ -294,15 +320,19 @@ void SSSRPass::execute(
       programInfo.getDescriptorLayoutId(0),
       cmds,
       {
-        binding_sampled(0, hiz, pointSampler),
-        binding_sampled(1, prev_depth, pointSampler),
-        binding_sampled(2, gbuffer_norm.getPrevious(), linearSampler),
-        binding_sampled(3, gbuffer_norm.getCurrent(), pointSampler),
-        binding_sampled(4, gbuffer_metalness_roughness, pointSampler),
-        binding_sampled(5, filterTarget, linearSampler),
-        binding_sampled(6, reflectTargetReflection, pointSampler),
-        binding_sampled(7, reflectTargetReprojectionUV, pointSampler),
-        binding_write(8, taTarget),
+        etna::Binding(0, prev_camera_buffer.genBinding()),
+        etna::Binding(1, curr_camera_buffer.genBinding()),
+        binding_sampled(2, hiz, pointSampler),
+        binding_sampled(3, prev_depth, pointSampler),
+        binding_sampled(4, gbuffer_norm.getPrevious(), linearSampler),
+        binding_sampled(5, gbuffer_norm.getCurrent(), pointSampler),
+        binding_sampled(6, gbuffer_metalness_roughness, pointSampler),
+        binding_sampled(7, filterTarget, linearSampler),
+        binding_sampled(8, temporalVariance.getPrevious(), linearSampler),
+        binding_sampled(9, reflectTargetReflection, pointSampler),
+        binding_sampled(10, reflectTargetReprojectionUV, pointSampler),
+        binding_write(11, taTarget),
+        binding_write(12, temporalVariance.getCurrent()),
       });
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, taPipeline.getVkPipeline());
@@ -336,6 +366,14 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
+      temporalVariance.getCurrent().get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmds,
       filterTarget.get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderStorageWrite,
@@ -356,7 +394,8 @@ void SSSRPass::execute(
         binding_sampled(2, gbuffer_norm.getCurrent(), pointSampler),
         binding_sampled(3, gbuffer_metalness_roughness, pointSampler),
         binding_sampled(4, taTarget, pointSampler),
-        binding_write(5, filterTarget),
+        binding_sampled(5, temporalVariance.getCurrent(), pointSampler),
+        binding_write(6, filterTarget),
       });
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, filterPipeline.getVkPipeline());

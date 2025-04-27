@@ -9,16 +9,28 @@ const int GROUP_SIZE         = 8;
 const int SAMPLE_BORDER      = 1;
 const int SAMPLE_WINDOW_SIZE = GROUP_SIZE + 2 * SAMPLE_BORDER;
 
-layout(set = 0, binding = 0) uniform sampler2D texHiZ;
-layout(set = 0, binding = 1) uniform sampler2D texPrevDepth;
-layout(set = 0, binding = 2) uniform sampler2D texPrevGBufferNorm;
-layout(set = 0, binding = 3) uniform sampler2D texCurrGBufferNorm;
-layout(set = 0, binding = 4) uniform sampler2D texMetalnessRoughness;
-layout(set = 0, binding = 5) uniform sampler2D texHistory;
-layout(set = 0, binding = 6) uniform sampler2D texReflectionConfidence;
-layout(set = 0, binding = 7) uniform sampler2D texReprojectionUV;
+layout(set = 0, binding = 0) uniform prev_camera_data_t
+{
+  CameraData prevCamera;
+};
 
-layout(set = 0, binding = 8, rgba8) uniform writeonly image2D out_reflectionConfidence;
+layout(set = 0, binding = 1) uniform curr_camera_data_t
+{
+  CameraData currCamera;
+};
+
+layout(set = 0, binding = 2) uniform sampler2D texHiZ;
+layout(set = 0, binding = 3) uniform sampler2D texPrevDepth;
+layout(set = 0, binding = 4) uniform sampler2D texPrevGBufferNorm;
+layout(set = 0, binding = 5) uniform sampler2D texCurrGBufferNorm;
+layout(set = 0, binding = 6) uniform sampler2D texMetalnessRoughness;
+layout(set = 0, binding = 7) uniform sampler2D texHistory;
+layout(set = 0, binding = 8) uniform sampler2D texHistoryVariance;
+layout(set = 0, binding = 9) uniform sampler2D texReflectionConfidence;
+layout(set = 0, binding = 10) uniform sampler2D texReprojectionUV;
+
+layout(set = 0, binding = 11, rgba8) uniform writeonly image2D out_reflectionConfidence;
+layout(set = 0, binding = 12, r16) uniform writeonly image2D out_temporalVariance;
 
 struct SharedData
 {
@@ -43,9 +55,28 @@ void LoadShared()
   barrier();
 }
 
-bool CheckNoDisocclusion(vec3 historyNormal, vec3 currentNormal, float historyDepth, float depth)
+bool CheckNoDisocclusion(
+  vec3 historyNormal,
+  vec3 currentNormal,
+  vec3 historyPosSS,
+  vec3 currentPosSS
+)
 {
-  return (dot(historyNormal, currentNormal) > 0.999f) && (abs(historyDepth - depth) < 0.0001f);
+  /* -------- AMD disocclusion solution -------- */
+  float normalFactor = exp(-abs(1.0f - max(0.0f, dot(currentNormal, historyNormal))) * 1.4f);
+
+  vec3 historyPosWS = ConvertScreenToWorld(prevCamera, historyPosSS);
+  vec3 currentPosWS = ConvertScreenToWorld(currCamera, currentPosSS);
+
+  float historyDepthVS = length(historyPosWS - prevCamera.wsPos);
+  float currentDepthVS = length(currentPosWS - currCamera.wsPos);
+
+  float depthFactor = exp(-abs(historyDepthVS - currentDepthVS) / currentDepthVS);
+
+  return normalFactor * depthFactor >= 0.9f;
+
+  /* -------- Simple disocclusion solution -------- */
+  // return (dot(historyNormal, currentNormal) > 0.999f) && (abs(historyPosSS.z - currentPosSS.z) < 0.0001f);
 }
 
 layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
@@ -91,7 +122,7 @@ void main()
 
   if (all(lessThan(historyUV, vec2(1.0f))) &&
       all(greaterThan(historyUV, vec2(0.0f))) &&
-      CheckNoDisocclusion(historyNormal, normalWS, historyDepth, depth))
+      CheckNoDisocclusion(historyNormal, normalWS, vec3(historyUV, historyDepth), vec3(uv, depth)))
   {
     historyReflection = texture(texHistory, historyUV);
 
@@ -125,5 +156,19 @@ void main()
 
   float taConfidence = max(reflectionConfidence.a, historyReflection.a);
 
+  /* Temporal variance */
+  float reflectionLuminance = Luminance(reflectionConfidence.rgb * reflectionConfidence.a);
+  float historyLuminance = Luminance(historyReflection.rgb * historyReflection.a);
+
+  float historyVariance = texture(texHistoryVariance, historyUV).r;
+
+  float newVariance = abs(reflectionLuminance - historyLuminance);
+  newVariance /= max(max(reflectionLuminance, historyLuminance), 0.5f);
+  newVariance = newVariance * newVariance;
+
+  float taVariance = mix(newVariance, historyVariance, 0.9f);
+
+  /* Store results */
   imageStore(out_reflectionConfidence, texelCoords, vec4(taReflection, taConfidence));
+  imageStore(out_temporalVariance, texelCoords, vec4(taVariance, 0.0f, 0.0f, 0.0f));
 }

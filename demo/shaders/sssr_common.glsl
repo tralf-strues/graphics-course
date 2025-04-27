@@ -24,6 +24,7 @@ layout(push_constant) uniform params_t
   int startMip;
   bool useTemporalAccumulation;
   bool useFilter;
+  bool useTemporalVariance;
   bool traceBehindSurfaces;
   bool visualizeIterationCount;
 } params;

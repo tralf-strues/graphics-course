@@ -136,6 +136,7 @@ private:
   bool showJustReflections = false;
   bool useTemporalAccumulation = true;
   bool useFilter = true;
+  bool useTemporalVariance = true;
   bool traceBehindSurfaces = false;
   bool useHalfResolution = true;
   bool visualizeIterationCount = false;
