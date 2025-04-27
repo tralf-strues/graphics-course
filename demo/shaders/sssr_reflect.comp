@@ -172,7 +172,7 @@ float ValidateHit(vec3 hitSS, vec3 hitWS, vec3 reflectionWS)
 
   ivec2 texelCoords = ivec2(hitSS.xy * vec2(params.resolution));
 
-  float depth = texelFetch(texHiZ, texelCoords, 0).r;
+  float depth = texelFetch(texHiZ, texelCoords, params.startMip).r;
   if (abs(depth - 1.0f) < 0.00001f)
   {
     return 0.0f;
@@ -202,7 +202,7 @@ vec3 TraceReflectionRay(
   vec3 invReflectionSS = 1.0f / reflectionSS;
 
   int currentMip = params.startMip;
-  vec2 currentMipResolution = params.resolution / (currentMip == 0 ? 1.0f : exp2(float(currentMip)));
+  vec2 currentMipResolution = params.resolution;
   vec2 currentMipInvResolution = 1.0f / currentMipResolution;
 
   vec2 xyBoundingPlaneStep = vec2(0.0f);
@@ -255,22 +255,23 @@ void main()
     return;
   }
 
-  float depth = texelFetch(texHiZ, texelCoords, 0).x;
+  vec2 uv = (vec2(texelCoords) + 0.5f) * params.invResolution;
+
+  float depth = texelFetch(texHiZ, texelCoords, params.startMip).x;
   if (abs(depth - 1.0f) < 0.00001f)
   {
     imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
     return;
   }
 
-  float roughness = texelFetch(texMetalnessRoughness, texelCoords, 0).g;
+  float roughness = texture(texMetalnessRoughness, uv).g;
   if (!CheckRoughnessThreshold(roughness))
   {
     imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
     return;
   }
 
-  vec2 uv = (vec2(texelCoords) + 0.5f) * params.invResolution;
-  vec3 normalWS = LoadNormal(texCurrGBufferNorm, texelCoords);
+  vec3 normalWS = LoadNormal(texCurrGBufferNorm, uv);
 
   vec3 posSS = vec3(uv, depth);
 

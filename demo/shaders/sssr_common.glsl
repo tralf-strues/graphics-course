@@ -7,6 +7,9 @@
 
 layout(push_constant) uniform params_t
 {
+  ivec2 originalResolution;
+  vec2 invOriginalResolution;
+
   ivec2 resolution;
   vec2 invResolution;
 

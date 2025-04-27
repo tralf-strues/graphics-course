@@ -15,12 +15,4 @@ vec3 LoadNormal(sampler2D texNorm, vec2 uv)
   return normalWS;
 }
 
-vec3 LoadNormal(sampler2D texNorm, ivec2 texelCoords)
-{
-  vec3 normalWS = texelFetch(texNorm, texelCoords, 0).xyz;
-  normalWS = normalize(255.0f / 127.0f * normalWS - 128.0f / 127.0f);
-
-  return normalWS;
-}
-
 #endif // COMMON_GLSL_INCLUDED

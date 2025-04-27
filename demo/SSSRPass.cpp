@@ -41,10 +41,8 @@ void SSSRPass::loadShaders()
   etna::create_program("sssr_filter", {DEMO_SHADERS_ROOT "sssr_filter.comp.spv"});
 }
 
-void SSSRPass::allocateResources(glm::uvec2 target_resolution, vk::Format format)
+void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
 {
-  resolution = target_resolution;
-
   auto& ctx = etna::get_context();
 
   pointSampler = etna::Sampler(etna::Sampler::CreateInfo{
@@ -225,10 +223,10 @@ void SSSRPass::execute(
         etna::Binding(1, curr_camera_buffer.genBinding()),
         binding_sampled(2, hiz, pointSampler),
         binding_sampled(3, prev_depth, pointSampler),
-        binding_sampled(4, gbuffer_norm.getCurrent(), pointSampler),
+        binding_sampled(4, gbuffer_norm.getCurrent(), linearSampler),
         binding_sampled(5, curr_motion_vectors, linearSampler),
         binding_sampled(6, prev_color, linearSampler),
-        binding_sampled(7, gbuffer_metalness_roughness, pointSampler),
+        binding_sampled(7, gbuffer_metalness_roughness, linearSampler),
         binding_sampled_cube(8, prefiltered_environment_map, linearSamplerRepeat),
         binding_write(9, reflectTargetReflection),
         binding_write(10, reflectTargetReprojectionUV),
@@ -246,8 +244,8 @@ void SSSRPass::execute(
       programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {params});
 
     cmds.dispatch(
-      (resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
-      (resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
       1);
   }
 
@@ -319,8 +317,8 @@ void SSSRPass::execute(
       programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {params});
 
     cmds.dispatch(
-      (resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
-      (resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
       1);
   }
 
@@ -373,8 +371,8 @@ void SSSRPass::execute(
       programInfo.getPipelineLayout(), vk::ShaderStageFlagBits::eCompute, 0, {params});
 
     cmds.dispatch(
-      (resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
-      (resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.x + GROUP_SIZE - 1) / GROUP_SIZE,
+      (params.resolution.y + GROUP_SIZE - 1) / GROUP_SIZE,
       1);
   }
 }

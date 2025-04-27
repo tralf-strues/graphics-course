@@ -83,6 +83,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   auto& ctx = etna::get_context();
 
   resolution = swapchain_resolution;
+  reflectionResolution = useHalfResolution ? (resolution / 2U) : resolution;
 
   recreateMaterialTextureSampler();
 
@@ -112,7 +113,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
 
   environmentManager.allocateResources();
   hizPass.allocateResources(swapchain_resolution, HiZPass::FULL_MIPCHAIN);
-  sssrPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
+  sssrPass.allocateResources(reflectionResolution, vk::Format::eR8G8B8A8Unorm);
   taaPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
   sharpenPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
 
@@ -568,6 +569,17 @@ void WorldRenderer::renderWorld(
 {
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
+  if ((useHalfResolution && resolution == reflectionResolution) ||
+      (!useHalfResolution && resolution != reflectionResolution))
+  {
+    reflectionResolution = useHalfResolution ? (resolution / 2U) : resolution;
+    auto waitResult = etna::get_context().getDevice().waitIdle();
+    assert(waitResult == vk::Result::eSuccess);
+
+    allocateResources(resolution);
+    invalidateSSSR = true;
+  }
+
   if (invalidateSSSR)
   {
     sssrPass.invalidate(cmd_buf);
@@ -664,14 +676,16 @@ void WorldRenderer::renderWorld(
   sssrPass.execute(
     cmd_buf,
     SSSRPass::Params{
-      .resolution = pushConstDeferredPass.resolution,
-      .invResolution = pushConstDeferredPass.invResolution,
+      .originalResolution = glm::ivec2(resolution),
+      .invOriginalResolution = 1.0f / glm::vec2(resolution),
+      .resolution = glm::ivec2(reflectionResolution),
+      .invResolution = 1.0f / glm::vec2(reflectionResolution),
       .envMapMips = static_cast<uint32_t>(environmentManager.getPrefilteredEnvMapMips()),
       .maxIterations = sssrMaxIterations,
       .frameIdx = static_cast<uint32_t>(etna::get_context().getMainWorkCount().batchIndex()),
       .depthThickness = sssrDepthThickness,
       .roughnessThreshold = sssrRoughnessThreshold,
-      .startMipLevel = startMipLevel,
+      .startMipLevel = useHalfResolution ? 1 : 0,
       .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
       .useFilter = static_cast<shader_bool>(useFilter),
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
@@ -947,7 +961,12 @@ void WorldRenderer::renderWorld(
           .layerCount = 1,
         },
       .srcOffsets = {{
-        {{0, 0, 0}, {static_cast<int32_t>(resolution.x), static_cast<int32_t>(resolution.y), 1}},
+        {{0, 0, 0},
+         {
+           static_cast<int32_t>(showJustReflections ? reflectionResolution.x : resolution.x),
+           static_cast<int32_t>(showJustReflections ? reflectionResolution.y : resolution.y),
+           1,
+         }},
       }},
       .dstSubresource =
         {
@@ -1066,6 +1085,7 @@ void WorldRenderer::drawGui()
 
       ImGui::NewLine();
 
+      ImGui::Checkbox("Half resolution", &useHalfResolution);
       ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
       ImGui::Checkbox("Filter", &useFilter);
       ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
@@ -1073,7 +1093,6 @@ void WorldRenderer::drawGui()
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
       ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
       ImGui::SliderFloat("Roughness threshold", &sssrRoughnessThreshold, 0.0f, 1.0f, "%.2f");
-      ImGui::SliderInt("Start mip", &startMipLevel, 0, hizPass.getMipCount());
     }
     pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
 

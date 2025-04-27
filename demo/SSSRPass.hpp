@@ -15,7 +15,9 @@ class SSSRPass
 public:
   struct Params
   {
-    glm::uvec2 resolution;
+    glm::ivec2 originalResolution;
+    glm::vec2 invOriginalResolution;
+    glm::ivec2 resolution;
     glm::vec2 invResolution;
     uint32_t envMapMips;
     int32_t maxIterations;
@@ -52,7 +54,7 @@ public:
   etna::Image& getReflectionTarget();
 
 private:
-  static constexpr size_t GROUP_SIZE = 8;
+  static constexpr int32_t GROUP_SIZE = 8;
 
 private:
   etna::Sampler pointSampler;
@@ -70,6 +72,4 @@ private:
 
   etna::Image taTarget;
   etna::Image filterTarget;
-
-  glm::uvec2 resolution;
 };

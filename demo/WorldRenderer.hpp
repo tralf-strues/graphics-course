@@ -76,6 +76,7 @@ private:
   vk::UniqueSampler materialTextureSampler;
 
   glm::uvec2 resolution;
+  glm::uvec2 reflectionResolution;
 
   /* Environment */
   EnvironmentManager environmentManager;
@@ -133,10 +134,10 @@ private:
   float sssrDepthThickness = 0.0001f;
   float sssrRoughnessThreshold = 0.4f;
   bool showJustReflections = false;
-  int32_t startMipLevel = 0;
   bool useTemporalAccumulation = true;
   bool useFilter = true;
   bool traceBehindSurfaces = false;
+  bool useHalfResolution = true;
   bool visualizeIterationCount = false;
 
   bool invalidateSSSR = true;

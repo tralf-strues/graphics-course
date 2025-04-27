@@ -52,6 +52,7 @@ layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) i
 void main()
 {
   ivec2 texelCoords = ivec2(gl_GlobalInvocationID.xy);
+  vec2 uv = (vec2(texelCoords) + 0.5f) * params.invResolution;
 
   LoadShared();
 
@@ -60,7 +61,7 @@ void main()
     return;
   }
 
-  float roughness = texelFetch(texMetalnessRoughness, texelCoords, 0).g;
+  float roughness = texture(texMetalnessRoughness, uv).g;
   if (!CheckRoughnessThreshold(roughness))
   {
     imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
@@ -78,8 +79,8 @@ void main()
     return;
   }
 
-  float depth = texelFetch(texHiZ, texelCoords, 0).x;
-  vec3 normalWS = LoadNormal(texCurrGBufferNorm, texelCoords);
+  float depth = texelFetch(texHiZ, texelCoords, params.startMip).x;
+  vec3 normalWS = LoadNormal(texCurrGBufferNorm, uv);
 
   /* Load history */
   vec2 historyUV = texelFetch(texReprojectionUV, texelCoords, 0).rg;
