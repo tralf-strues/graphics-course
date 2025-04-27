@@ -6,7 +6,7 @@
 #include "sssr_common.glsl"
 
 const int GROUP_SIZE         = 8;
-const int SAMPLE_BORDER      = 3;
+const int SAMPLE_BORDER      = 1;
 const int SAMPLE_WINDOW_SIZE = GROUP_SIZE + 2 * SAMPLE_BORDER;
 
 layout(set = 0, binding = 0) uniform sampler2D texHiZ;
@@ -30,7 +30,7 @@ shared SharedData sharedData[SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE];
 /* Load samples of current texture for history neighbor clipping */
 void LoadShared()
 {
-  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - SAMPLE_BORDER;
+  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * GROUP_SIZE) - SAMPLE_BORDER;
 
   int threadIdx = int(gl_LocalInvocationIndex);
   for (int idx = threadIdx; idx < SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE; idx += GROUP_SIZE * GROUP_SIZE)

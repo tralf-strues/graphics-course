@@ -71,7 +71,7 @@ void main()
   uvec2 coord = gl_GlobalInvocationID.xy;
 
   /* Load samples of current texture for color clamping */
-  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * gl_WorkGroupSize.xy) - SAMPLE_BORDER;
+  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * GROUP_SIZE) - SAMPLE_BORDER;
 
   int threadIdx = int(gl_LocalInvocationIndex);
   for (int idx = threadIdx; idx < SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE; idx += GROUP_SIZE * GROUP_SIZE)
