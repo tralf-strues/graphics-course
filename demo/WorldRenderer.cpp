@@ -6,6 +6,7 @@
 #include <etna/PipelineManager.hpp>
 #include <etna/RenderTargetStates.hpp>
 #include <etna/Profiling.hpp>
+#include <render_utils/Utils.hpp>
 #include <glm/ext.hpp>
 #include <imgui.h>
 
@@ -160,6 +161,24 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
       .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
     });
   }
+
+  imagePyramidMips =
+    static_cast<uint32_t>(std::floor(std::log2(std::max(resolution.x, resolution.y)))) + 1;
+
+  imagePyramid = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+    .name = "imagePyramid",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+      vk::ImageUsageFlagBits::eTransferDst,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .tiling = vk::ImageTiling::eOptimal,
+    .layers = 1,
+    .mipLevels = imagePyramidMips,
+    .samples = vk::SampleCountFlagBits::e1,
+    .type = vk::ImageType::e2D,
+    .flags = {},
+  });
 }
 
 void WorldRenderer::loadScene(std::filesystem::path path)
@@ -681,14 +700,20 @@ void WorldRenderer::renderWorld(
       .resolution = glm::ivec2(reflectionResolution),
       .invResolution = 1.0f / glm::vec2(reflectionResolution),
       .envMapMips = static_cast<uint32_t>(environmentManager.getPrefilteredEnvMapMips()),
+      .imagePyramidMips = imagePyramidMips,
       .maxIterations = sssrMaxIterations,
+      .maxAccumulationSamples = sssrMaxAccumulationSamples,
       .frameIdx = static_cast<uint32_t>(etna::get_context().getMainWorkCount().batchIndex()),
       .depthThickness = sssrDepthThickness,
       .roughnessThreshold = sssrRoughnessThreshold,
+      .temporalStability = sssrTemporalStability,
       .startMipLevel = useHalfResolution ? 1 : 0,
+      .useBlueNoise = static_cast<shader_bool>(useBlueNoise),
       .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
+      .useExponentialTemporalMean = static_cast<shader_bool>(useExponentialTemporalMean),
       .useFilter = static_cast<shader_bool>(useFilter),
       .useTemporalVariance = static_cast<shader_bool>(useTemporalVariance),
+      .fallbackToAverage = static_cast<shader_bool>(fallbackToAverage),
       .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
       .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
     },
@@ -698,7 +723,7 @@ void WorldRenderer::renderWorld(
     depth.getPrevious(),
     gBufferNorm,
     taaPass.getMotionVectors(),
-    taaPass.getHistory(),
+    imagePyramid,
     gBufferMetalnessRoughness,
     environment.prefilteredEnvMap);
 
@@ -816,7 +841,8 @@ void WorldRenderer::renderWorld(
             linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
           8,
-          reflectionTarget.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          reflectionTarget.genBinding(
+            linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
         etna::Binding(9, shadowCameraBuffer.get().genBinding()),
         etna::Binding(10, lightBuffer.get().genBinding()),
@@ -931,6 +957,8 @@ void WorldRenderer::renderWorld(
   sharpenPass.execute(cmd_buf, resolveTarget, pointSampler);
 
   auto& blitSrc = showJustReflections ? reflectionTarget : sharpenPass.getTarget();
+
+  generate_mips(cmd_buf, sharpenPass.getTarget(), imagePyramid);
 
   // Blit from target to swapchain image
   {
@@ -1087,14 +1115,19 @@ void WorldRenderer::drawGui()
       ImGui::NewLine();
 
       ImGui::Checkbox("Half resolution", &useHalfResolution);
+      ImGui::Checkbox("Use blue noise", &useBlueNoise);
       ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
+      ImGui::Checkbox("Exponential accumulation", &useExponentialTemporalMean);
       ImGui::Checkbox("Filter", &useFilter);
       ImGui::Checkbox("Use temporal variance", &useTemporalVariance);
+      ImGui::Checkbox("Fallback to average", &fallbackToAverage);
       ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
 
       ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
+      ImGui::SliderInt("Max TA samples", &sssrMaxAccumulationSamples, 1, 512);
       ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
       ImGui::SliderFloat("Roughness threshold", &sssrRoughnessThreshold, 0.0f, 1.0f, "%.2f");
+      ImGui::SliderFloat("Temporal stability", &sssrTemporalStability, 0.0f, 1.0f, "%.2f");
     }
     pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
 

@@ -3,6 +3,7 @@
 #include <etna/Image.hpp>
 #include <etna/Sampler.hpp>
 #include <etna/ComputePipeline.hpp>
+#include <etna/BlockingTransferHelper.hpp>
 #include <glm/glm.hpp>
 
 #include "cpp_glsl_compat.h"
@@ -20,14 +21,20 @@ public:
     glm::ivec2 resolution;
     glm::vec2 invResolution;
     uint32_t envMapMips;
+    uint32_t imagePyramidMips;
     int32_t maxIterations;
+    int32_t maxAccumulationSamples;
     uint32_t frameIdx;
     float depthThickness;
     float roughnessThreshold;
+    float temporalStability;
     int32_t startMipLevel;
+    shader_bool useBlueNoise;
     shader_bool useTemporalAccumulation;
+    shader_bool useExponentialTemporalMean;
     shader_bool useFilter;
     shader_bool useTemporalVariance;
+    shader_bool fallbackToAverage;
     shader_bool traceBehindSurfaces;
     shader_bool visualizeIterationCount;
   };
@@ -57,7 +64,15 @@ public:
 private:
   static constexpr int32_t GROUP_SIZE = 8;
 
-private:
+  void readBlueNoise();
+
+  std::unique_ptr<etna::OneShotCmdMgr> oneShotCommands{etna::get_context().createOneShotCmdMgr()};
+  etna::BlockingTransferHelper transferHelper{etna::BlockingTransferHelper::CreateInfo{
+    .stagingSize = 128 * 128 * 64,
+  }};
+
+  etna::Image blueNoise;
+
   etna::Sampler pointSampler;
   etna::Sampler linearSampler;
   etna::Sampler linearSamplerRepeat;
@@ -68,9 +83,10 @@ private:
 
   etna::Image reflectTargetReflection;
   etna::Image reflectTargetReprojectionUV;
+  etna::Image avgReflection;
 
   etna::Image taTarget;
-  Temporal<etna::Image> temporalVariance;
+  Temporal<etna::Image> taVarianceAndNumSamples;
 
   etna::Image filterTarget;
 };

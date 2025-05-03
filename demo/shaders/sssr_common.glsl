@@ -14,17 +14,23 @@ layout(push_constant) uniform params_t
   vec2 invResolution;
 
   uint envMapMips;
+  uint imagePyramidMips;
   int maxIterations;
+  int maxAccumulationSamples;
 
   uint frameIdx;
 
   float depthThickness;
   float roughnessThreshold;
+  float temporalStability;
 
   int startMip;
+  bool useBlueNoise;
   bool useTemporalAccumulation;
+  bool useExponentialTemporalMean;
   bool useFilter;
   bool useTemporalVariance;
+  bool fallbackToAverage;
   bool traceBehindSurfaces;
   bool visualizeIterationCount;
 } params;

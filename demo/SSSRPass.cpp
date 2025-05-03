@@ -5,6 +5,8 @@
 #include <etna/PipelineManager.hpp>
 #include <etna/Profiling.hpp>
 
+#include <stb_image.h>
+
 auto binding_sampled(uint32_t binding, const etna::Image& image, const etna::Sampler& sampler)
 {
   return etna::Binding(
@@ -26,6 +28,23 @@ auto binding_sampled_cube(uint32_t binding, const etna::Image& image, const etna
         vk::RemainingArrayLayers,
         {},
         vk::ImageViewType::eCube,
+      }));
+}
+
+auto binding_sampled_array(uint32_t binding, const etna::Image& image, const etna::Sampler& sampler)
+{
+  return etna::Binding(
+    binding,
+    image.genBinding(
+      sampler.get(),
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      etna::Image::ViewParams{
+        0,
+        vk::RemainingMipLevels,
+        0,
+        vk::RemainingArrayLayers,
+        {},
+        vk::ImageViewType::e2DArray,
       }));
 }
 
@@ -59,7 +78,7 @@ void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
     .addressMode = vk::SamplerAddressMode::eClampToBorder,
     .name = "SSSRPass::linearSampler",
     .minLod = 0.0f,
-    .maxLod = 0.0f,
+    .maxLod = vk::LodClampNone,
   });
 
   linearSamplerRepeat = etna::Sampler(etna::Sampler::CreateInfo{
@@ -84,6 +103,14 @@ void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
     .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
   });
 
+  glm::uvec2 avgReflectionResolution = resolution / 8U;
+  avgReflection = ctx.createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{avgReflectionResolution.x, avgReflectionResolution.y, 1},
+    .name = "SSSRPass::avgReflection",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
+  });
+
   taTarget = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
     .name = "SSSRPass::taTarget",
@@ -91,12 +118,12 @@ void SSSRPass::allocateResources(glm::uvec2 resolution, vk::Format format)
     .imageUsage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
   });
 
-  for (size_t i = 0; i < temporalVariance.size(); ++i)
+  for (size_t i = 0; i < taVarianceAndNumSamples.size(); ++i)
   {
-    temporalVariance[i] = ctx.createImage(etna::Image::CreateInfo{
+    taVarianceAndNumSamples[i] = ctx.createImage(etna::Image::CreateInfo{
       .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-      .name = "SSSRPass::temporalVariance[" + std::to_string(i) + "]",
-      .format = vk::Format::eR16Unorm,
+      .name = "SSSRPass::taVarianceAndNumSamples[" + std::to_string(i) + "]",
+      .format = vk::Format::eR16G16Sfloat,
       .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eStorage |
         vk::ImageUsageFlagBits::eTransferDst,
     });
@@ -121,6 +148,8 @@ void SSSRPass::setupPipelines()
 
   filterPipeline =
     etna::get_context().getPipelineManager().createComputePipeline("sssr_filter", {});
+
+  readBlueNoise();
 }
 
 void SSSRPass::execute(
@@ -220,6 +249,14 @@ void SSSRPass::execute(
       vk::ImageLayout::eGeneral,
       vk::ImageAspectFlagBits::eColor);
 
+    etna::set_state(
+      cmds,
+      avgReflection.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderStorageWrite,
+      vk::ImageLayout::eGeneral,
+      vk::ImageAspectFlagBits::eColor);
+
     etna::flush_barriers(cmds);
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, reflectPipeline.getVkPipeline());
@@ -238,8 +275,10 @@ void SSSRPass::execute(
         binding_sampled(6, prev_color, linearSampler),
         binding_sampled(7, gbuffer_metalness_roughness, linearSampler),
         binding_sampled_cube(8, prefiltered_environment_map, linearSamplerRepeat),
-        binding_write(9, reflectTargetReflection),
-        binding_write(10, reflectTargetReprojectionUV),
+        binding_sampled_array(9, blueNoise, pointSampler),
+        binding_write(10, reflectTargetReflection),
+        binding_write(11, reflectTargetReprojectionUV),
+        binding_write(12, avgReflection),
       });
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, reflectPipeline.getVkPipeline());
@@ -281,6 +320,14 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
+      avgReflection.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmds,
       filterTarget.get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
@@ -289,7 +336,7 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
-      temporalVariance.getPrevious().get(),
+      taVarianceAndNumSamples.getPrevious().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -305,7 +352,7 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
-      temporalVariance.getCurrent().get(),
+      taVarianceAndNumSamples.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderStorageWrite,
       vk::ImageLayout::eGeneral,
@@ -328,11 +375,12 @@ void SSSRPass::execute(
         binding_sampled(5, gbuffer_norm.getCurrent(), pointSampler),
         binding_sampled(6, gbuffer_metalness_roughness, pointSampler),
         binding_sampled(7, filterTarget, linearSampler),
-        binding_sampled(8, temporalVariance.getPrevious(), linearSampler),
+        binding_sampled(8, taVarianceAndNumSamples.getPrevious(), linearSampler),
         binding_sampled(9, reflectTargetReflection, pointSampler),
         binding_sampled(10, reflectTargetReprojectionUV, pointSampler),
-        binding_write(11, taTarget),
-        binding_write(12, temporalVariance.getCurrent()),
+        binding_sampled(11, avgReflection, linearSampler),
+        binding_write(12, taTarget),
+        binding_write(13, taVarianceAndNumSamples.getCurrent()),
       });
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, taPipeline.getVkPipeline());
@@ -352,6 +400,8 @@ void SSSRPass::execute(
       1);
   }
 
+  taVarianceAndNumSamples.proceed();
+
   // Filter
   {
     ETNA_PROFILE_GPU(cmds, SSSR_Filter);
@@ -366,7 +416,7 @@ void SSSRPass::execute(
 
     etna::set_state(
       cmds,
-      temporalVariance.getCurrent().get(),
+      taVarianceAndNumSamples.getPrevious().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -375,6 +425,14 @@ void SSSRPass::execute(
     etna::set_state(
       cmds,
       filterTarget.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderStorageWrite,
+      vk::ImageLayout::eGeneral,
+      vk::ImageAspectFlagBits::eColor);
+
+    etna::set_state(
+      cmds,
+      taVarianceAndNumSamples.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderStorageWrite,
       vk::ImageLayout::eGeneral,
@@ -394,8 +452,10 @@ void SSSRPass::execute(
         binding_sampled(2, gbuffer_norm.getCurrent(), pointSampler),
         binding_sampled(3, gbuffer_metalness_roughness, pointSampler),
         binding_sampled(4, taTarget, pointSampler),
-        binding_sampled(5, temporalVariance.getCurrent(), pointSampler),
-        binding_write(6, filterTarget),
+        binding_sampled(5, taVarianceAndNumSamples.getPrevious(), pointSampler),
+        binding_sampled(6, avgReflection, linearSampler),
+        binding_write(7, filterTarget),
+        binding_write(8, taVarianceAndNumSamples.getCurrent()),
       });
 
     cmds.bindPipeline(vk::PipelineBindPoint::eCompute, filterPipeline.getVkPipeline());
@@ -426,6 +486,17 @@ void SSSRPass::invalidate(vk::CommandBuffer cmds)
     vk::ImageLayout::eTransferDstOptimal,
     vk::ImageAspectFlagBits::eColor);
 
+  for (auto& image : taVarianceAndNumSamples)
+  {
+    etna::set_state(
+      cmds,
+      image.get(),
+      vk::PipelineStageFlagBits2::eTransfer,
+      vk::AccessFlagBits2::eTransferWrite,
+      vk::ImageLayout::eTransferDstOptimal,
+      vk::ImageAspectFlagBits::eColor);
+  }
+
   etna::flush_barriers(cmds);
 
   cmds.clearColorImage(
@@ -441,9 +512,77 @@ void SSSRPass::invalidate(vk::CommandBuffer cmds)
         .layerCount = 1,
       },
     });
+
+  for (auto& image : taVarianceAndNumSamples)
+  {
+    cmds.clearColorImage(
+      image.get(),
+      vk::ImageLayout::eTransferDstOptimal,
+      vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f},
+      {
+        vk::ImageSubresourceRange{
+          .aspectMask = vk::ImageAspectFlagBits::eColor,
+          .baseMipLevel = 0,
+          .levelCount = 1,
+          .baseArrayLayer = 0,
+          .layerCount = 1,
+        },
+      });
+  }
 }
 
 etna::Image& SSSRPass::getReflectionTarget()
 {
   return filterTarget;
+}
+
+void SSSRPass::readBlueNoise()
+{
+  blueNoise = etna::get_context().createImage(etna::Image::CreateInfo{
+    .extent = vk::Extent3D{128, 128, 1},
+    .name = "BlueNoise",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .tiling = vk::ImageTiling::eOptimal,
+    .layers = 64,
+    .mipLevels = 1,
+    .samples = vk::SampleCountFlagBits::e1,
+  });
+
+  for (size_t layer = 0; layer < 64; ++layer)
+  {
+    std::string path = GRAPHICS_COURSE_RESOURCES_ROOT "/textures/stbn/stbn_vec2_2Dx1D_128x128x64_" +
+      std::to_string(layer) + ".png";
+
+    int width, height, nrComponents;
+    stbi_uc* data = stbi_load(path.c_str(), &width, &height, &nrComponents, 4);
+
+    transferHelper.uploadImage(
+      *oneShotCommands,
+      blueNoise,
+      0,
+      static_cast<uint32_t>(layer),
+      std::span<std::byte const>(
+        reinterpret_cast<const std::byte*>(data),
+        width * height * nrComponents * sizeof(std::byte)));
+
+    stbi_image_free(data);
+  }
+
+  auto cmdBuffer = oneShotCommands->start();
+  ETNA_CHECK_VK_RESULT(cmdBuffer.begin(vk::CommandBufferBeginInfo{}));
+
+  etna::set_state(
+    cmdBuffer,
+    blueNoise.get(),
+    vk::PipelineStageFlagBits2::eComputeShader,
+    vk::AccessFlagBits2::eShaderSampledRead,
+    vk::ImageLayout::eShaderReadOnlyOptimal,
+    vk::ImageAspectFlagBits::eColor);
+
+  etna::flush_barriers(cmdBuffer);
+
+  ETNA_CHECK_VK_RESULT(cmdBuffer.end());
+  oneShotCommands->submitAndWait(std::move(cmdBuffer));
 }

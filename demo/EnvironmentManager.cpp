@@ -254,6 +254,8 @@ etna::Image EnvironmentManager::loadCubemap(const std::filesystem::path& path)
   ETNA_CHECK_VK_RESULT(cmdBuffer.end());
   oneShotCommands->submitAndWait(std::move(cmdBuffer));
 
+  stbi_image_free(data);
+
   return cubemap;
 }
 

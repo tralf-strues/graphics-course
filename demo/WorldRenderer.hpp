@@ -130,15 +130,20 @@ private:
 
   /* SSSR */
   SSSRPass sssrPass;
-  int32_t sssrMaxIterations = 100;
+  int32_t sssrMaxIterations = 60;
+  int32_t sssrMaxAccumulationSamples = 32;
   float sssrDepthThickness = 0.0001f;
-  float sssrRoughnessThreshold = 0.4f;
+  float sssrRoughnessThreshold = 1.0f;
+  float sssrTemporalStability = 0.1f;
   bool showJustReflections = false;
+  bool useBlueNoise = true;
   bool useTemporalAccumulation = true;
+  bool useExponentialTemporalMean = false;
   bool useFilter = true;
   bool useTemporalVariance = true;
+  bool fallbackToAverage = true;
   bool traceBehindSurfaces = false;
-  bool useHalfResolution = true;
+  bool useHalfResolution = false;
   bool visualizeIterationCount = false;
 
   bool invalidateSSSR = true;
@@ -146,12 +151,16 @@ private:
   /* TAA */
   TAAPass taaPass;
   bool enableTAA = true;
-  bool unjitterTextureUVs = true;
+  bool unjitterTextureUVs = false;
   bool filterHistory = true;
   float materialTextureMipBias = 0.0f;
 
   /* Sharpen Pass */
   SharpenPass sharpenPass;
+
+  /* Image pyramid */
+  etna::Image imagePyramid;
+  uint32_t imagePyramidMips = 0;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;
