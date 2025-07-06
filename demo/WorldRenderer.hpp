@@ -15,6 +15,7 @@
 #include "FramePacket.hpp"
 #include "EnvironmentManager.hpp"
 #include "HiZPass.hpp"
+#include "SSSRPass.hpp"
 #include "TAAPass.hpp"
 #include "SharpenPass.hpp"
 
@@ -75,6 +76,7 @@ private:
   vk::UniqueSampler materialTextureSampler;
 
   glm::uvec2 resolution;
+  glm::uvec2 reflectionResolution;
 
   /* Environment */
   EnvironmentManager environmentManager;
@@ -95,12 +97,12 @@ private:
   Temporal<CameraData> cameraData;
 
   Temporal<std::vector<glm::mat4x4>> transforms;
-  bool animate = true;
+  bool animate = false;
 
-  etna::Image depth;
+  Temporal<etna::Image> depth;
   etna::Image gBufferAlbedo;
   etna::Image gBufferMetalnessRoughness;
-  etna::Image gBufferNorm;
+  Temporal<etna::Image> gBufferNorm;
 
   /* Deferred Pass */
   etna::ComputePipeline deferredPassPipeline;
@@ -111,17 +113,13 @@ private:
     glm::uvec2 resolution;
     glm::vec2 invResolution;
 
-    float proj22;
-    float proj23;
-    float invProj00;
-    float invProj11;
-
     uint32_t envMapMips;
     shader_bool enableEmission;
     shader_bool enableDiffuseIBL;
     shader_bool enableSpecularIBL;
     shader_bool enableDirectionalLight;
     shader_bool enablePointLights;
+    shader_bool enableReflections;
   } pushConstDeferredPass;
 
   /* Forward Pass */
@@ -130,15 +128,39 @@ private:
   /* HiZ */
   HiZPass hizPass;
 
+  /* SSSR */
+  SSSRPass sssrPass;
+  int32_t sssrMaxIterations = 60;
+  int32_t sssrMaxAccumulationSamples = 32;
+  float sssrDepthThickness = 0.0001f;
+  float sssrRoughnessThreshold = 1.0f;
+  float sssrTemporalStability = 0.1f;
+  bool showJustReflections = false;
+  bool useBlueNoise = true;
+  bool useTemporalAccumulation = true;
+  bool useExponentialTemporalMean = false;
+  bool useFilter = true;
+  bool useTemporalVariance = true;
+  bool fallbackToAverage = true;
+  bool traceBehindSurfaces = false;
+  bool useHalfResolution = false;
+  bool visualizeIterationCount = false;
+
+  bool invalidateSSSR = true;
+
   /* TAA */
   TAAPass taaPass;
   bool enableTAA = true;
-  bool unjitterTextureUVs = true;
+  bool unjitterTextureUVs = false;
   bool filterHistory = true;
   float materialTextureMipBias = 0.0f;
 
   /* Sharpen Pass */
   SharpenPass sharpenPass;
+
+  /* Image pyramid */
+  etna::Image imagePyramid;
+  uint32_t imagePyramidMips = 0;
 
   /* Debug Preview Pass */
   std::unique_ptr<QuadRenderer> debugPreviewRenderer;

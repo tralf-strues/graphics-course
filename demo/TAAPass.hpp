@@ -16,6 +16,7 @@ public:
   void allocateResources(glm::uvec2 target_resolution, vk::Format format);
   void setupPipelines();
 
+  etna::Image& getHistory();
   etna::Image& getCurrentTarget();
   etna::Image& getResolveTarget();
   etna::Image& getMotionVectors();
@@ -27,9 +28,6 @@ public:
 
 private:
   static constexpr size_t GROUP_SIZE = 8;
-
-private:
-  etna::Image& getHistory();
 
 private:
   etna::ComputePipeline pipeline;

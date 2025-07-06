@@ -6,6 +6,7 @@
 #include <etna/PipelineManager.hpp>
 #include <etna/RenderTargetStates.hpp>
 #include <etna/Profiling.hpp>
+#include <render_utils/Utils.hpp>
 #include <glm/ext.hpp>
 #include <imgui.h>
 
@@ -83,6 +84,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   auto& ctx = etna::get_context();
 
   resolution = swapchain_resolution;
+  reflectionResolution = useHalfResolution ? (resolution / 2U) : resolution;
 
   recreateMaterialTextureSampler();
 
@@ -112,6 +114,7 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
 
   environmentManager.allocateResources();
   hizPass.allocateResources(swapchain_resolution, HiZPass::FULL_MIPCHAIN);
+  sssrPass.allocateResources(reflectionResolution, vk::Format::eR8G8B8A8Unorm);
   taaPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
   sharpenPass.allocateResources(swapchain_resolution, vk::Format::eR8G8B8A8Unorm);
 
@@ -125,13 +128,15 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
   });
 
   /* Geometry Pass */
-  depth = ctx.createImage(etna::Image::CreateInfo{
-    .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "depth",
-    .format = vk::Format::eD32Sfloat,
-    .imageUsage =
-      vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-  });
+  for (size_t i = 0; i < depth.size(); ++i)
+  {
+    depth[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "depth[" + std::to_string(i) + "]",
+      .format = vk::Format::eD32Sfloat,
+      .imageUsage = vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+    });
+  }
 
   gBufferAlbedo = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
@@ -147,11 +152,32 @@ void WorldRenderer::allocateResources(glm::uvec2 swapchain_resolution)
     .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
   });
 
-  gBufferNorm = ctx.createImage(etna::Image::CreateInfo{
+  for (size_t i = 0; i < gBufferNorm.size(); ++i)
+  {
+    gBufferNorm[i] = ctx.createImage(etna::Image::CreateInfo{
+      .extent = vk::Extent3D{resolution.x, resolution.y, 1},
+      .name = "gBufferNorm[" + std::to_string(i) + "]",
+      .format = GBUFFER_NORM_FORMAT,
+      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    });
+  }
+
+  imagePyramidMips =
+    static_cast<uint32_t>(std::floor(std::log2(std::max(resolution.x, resolution.y)))) + 1;
+
+  imagePyramid = ctx.createImage(etna::Image::CreateInfo{
     .extent = vk::Extent3D{resolution.x, resolution.y, 1},
-    .name = "gBufferNorm",
-    .format = GBUFFER_NORM_FORMAT,
-    .imageUsage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+    .name = "imagePyramid",
+    .format = vk::Format::eR8G8B8A8Unorm,
+    .imageUsage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferSrc |
+      vk::ImageUsageFlagBits::eTransferDst,
+    .memoryUsage = VMA_MEMORY_USAGE_GPU_ONLY,
+    .tiling = vk::ImageTiling::eOptimal,
+    .layers = 1,
+    .mipLevels = imagePyramidMips,
+    .samples = vk::SampleCountFlagBits::e1,
+    .type = vk::ImageType::e2D,
+    .flags = {},
   });
 }
 
@@ -169,6 +195,32 @@ void WorldRenderer::loadScene(std::filesystem::path path)
   auto instancesCount = sceneMgr->getInstanceMatrices().size();
   transforms.getPrevious().resize(instancesCount);
   transforms.getCurrent().resize(instancesCount);
+
+  for (auto& material : sceneMgr->getMaterials()) {
+    if (material.name == "Material.Cube") {
+      material.albedo = glm::vec3{0.68f, 0.68f, 0.68f};
+      material.roughness = 0.15f;
+      material.metalness = 0.75f;
+    }
+
+    if (material.name == "Material.Suzanne") {
+      material.albedo = glm::vec3{1.0f, 0.123f, 0.123f};
+      material.roughness = 1.0f;
+      material.metalness = 0.0f;
+    }
+
+    if (material.name == "Material.SphereSide") {
+      material.albedo = glm::vec3{1.0f, 0.65f, 0.0f};
+      material.roughness = 0.125f;
+      material.metalness = 1.0f;
+    }
+
+    if (material.name == "Material.SphereBack") {
+      material.albedo = glm::vec3{1.0f, 1.0f, 1.0f};
+      material.roughness = 0.0f;
+      material.metalness = 0.15f;
+    }
+  }
 }
 
 void WorldRenderer::loadShaders()
@@ -186,6 +238,7 @@ void WorldRenderer::loadShaders()
 
   environmentManager.loadShaders();
   hizPass.loadShaders();
+  sssrPass.loadShaders();
   taaPass.loadShaders();
   sharpenPass.loadShaders();
 }
@@ -298,6 +351,7 @@ void WorldRenderer::setupPipelines(vk::Format swapchain_format)
 
   environmentManager.setupPipelines();
   hizPass.setupPipelines();
+  sssrPass.setupPipelines();
   taaPass.setupPipelines();
   sharpenPass.setupPipelines();
 }
@@ -363,6 +417,12 @@ void WorldRenderer::update(const FramePacket& packet)
     mainCamera.view = packet.mainCam.viewTm();
     mainCamera.proj = proj;
     mainCamera.projView = proj * mainCamera.view;
+
+    mainCamera.proj22 = proj[2][2];
+    mainCamera.proj23 = proj[3][2];
+    mainCamera.invProj00 = 1.0f / proj[0][0];
+    mainCamera.invProj11 = 1.0f / proj[1][1];
+
     mainCamera.wsPos = packet.mainCam.position;
     mainCamera.wsForward = packet.mainCam.forward();
     mainCamera.wsRight = packet.mainCam.right();
@@ -372,11 +432,6 @@ void WorldRenderer::update(const FramePacket& packet)
 
     std::memcpy(currCameraBuffer.get().data(), &cameraData.getCurrent(), sizeof(CameraData));
     std::memcpy(prevCameraBuffer.get().data(), &cameraData.getPrevious(), sizeof(CameraData));
-
-    pushConstDeferredPass.proj22 = proj[2][2];
-    pushConstDeferredPass.proj23 = proj[3][2];
-    pushConstDeferredPass.invProj00 = 1.0f / proj[0][0];
-    pushConstDeferredPass.invProj11 = 1.0f / proj[1][1];
   }
 
   // update transforms
@@ -533,6 +588,23 @@ void WorldRenderer::renderWorld(
 {
   ETNA_PROFILE_GPU(cmd_buf, renderWorld);
 
+  if ((useHalfResolution && resolution == reflectionResolution) ||
+      (!useHalfResolution && resolution != reflectionResolution))
+  {
+    reflectionResolution = useHalfResolution ? (resolution / 2U) : resolution;
+    auto waitResult = etna::get_context().getDevice().waitIdle();
+    assert(waitResult == vk::Result::eSuccess);
+
+    allocateResources(resolution);
+    invalidateSSSR = true;
+  }
+
+  if (invalidateSSSR)
+  {
+    sssrPass.invalidate(cmd_buf);
+    invalidateSSSR = false;
+  }
+
   auto& environment = environmentManager.getEnvironments()[environmentIdx];
 
   // Shadow Pass
@@ -594,8 +666,8 @@ void WorldRenderer::renderWorld(
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         },
         {
-          .image = gBufferNorm.get(),
-          .view = gBufferNorm.getView({}),
+          .image = gBufferNorm.getCurrent().get(),
+          .view = gBufferNorm.getCurrent().getView({}),
           .clearColorValue = {0.0f, 0.0f, 0.0f, 0.0f},
         },
         {
@@ -605,7 +677,7 @@ void WorldRenderer::renderWorld(
         },
       },
 
-      {.image = depth.get(), .view = depth.getView({})});
+      {.image = depth.getCurrent().get(), .view = depth.getCurrent().getView({})});
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eGraphics, geometryPassPipeline.getVkPipeline());
     cmd_buf.bindDescriptorSets(
@@ -618,7 +690,45 @@ void WorldRenderer::renderWorld(
     renderScene(cmd_buf, geometryPassInfo, true);
   }
 
+  hizPass.execute(cmd_buf, depth.getCurrent());
+
+  sssrPass.execute(
+    cmd_buf,
+    SSSRPass::Params{
+      .originalResolution = glm::ivec2(resolution),
+      .invOriginalResolution = 1.0f / glm::vec2(resolution),
+      .resolution = glm::ivec2(reflectionResolution),
+      .invResolution = 1.0f / glm::vec2(reflectionResolution),
+      .envMapMips = static_cast<uint32_t>(environmentManager.getPrefilteredEnvMapMips()),
+      .imagePyramidMips = imagePyramidMips,
+      .maxIterations = sssrMaxIterations,
+      .maxAccumulationSamples = sssrMaxAccumulationSamples,
+      .frameIdx = static_cast<uint32_t>(etna::get_context().getMainWorkCount().batchIndex()),
+      .depthThickness = sssrDepthThickness,
+      .roughnessThreshold = sssrRoughnessThreshold,
+      .temporalStability = sssrTemporalStability,
+      .startMipLevel = useHalfResolution ? 1 : 0,
+      .useBlueNoise = static_cast<shader_bool>(useBlueNoise),
+      .useTemporalAccumulation = static_cast<shader_bool>(useTemporalAccumulation),
+      .useExponentialTemporalMean = static_cast<shader_bool>(useExponentialTemporalMean),
+      .useFilter = static_cast<shader_bool>(useFilter),
+      .useTemporalVariance = static_cast<shader_bool>(useTemporalVariance),
+      .fallbackToAverage = static_cast<shader_bool>(fallbackToAverage),
+      .traceBehindSurfaces = static_cast<shader_bool>(traceBehindSurfaces),
+      .visualizeIterationCount = static_cast<shader_bool>(visualizeIterationCount),
+    },
+    prevCameraBuffer.get(),
+    currCameraBuffer.get(),
+    hizPass.getHiZ(),
+    depth.getPrevious(),
+    gBufferNorm,
+    taaPass.getMotionVectors(),
+    imagePyramid,
+    gBufferMetalnessRoughness,
+    environment.prefilteredEnvMap);
+
   auto& deferredTarget = taaPass.getCurrentTarget();
+  auto& reflectionTarget = sssrPass.getReflectionTarget();
 
   // Deferred Pass
   {
@@ -650,7 +760,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      gBufferNorm.get(),
+      gBufferNorm.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -658,7 +768,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      depth.get(),
+      depth.getCurrent().get(),
       vk::PipelineStageFlagBits2::eComputeShader,
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -671,6 +781,14 @@ void WorldRenderer::renderWorld(
       vk::AccessFlagBits2::eShaderSampledRead,
       vk::ImageLayout::eShaderReadOnlyOptimal,
       vk::ImageAspectFlagBits::eDepth);
+
+    etna::set_state(
+      cmd_buf,
+      reflectionTarget.get(),
+      vk::PipelineStageFlagBits2::eComputeShader,
+      vk::AccessFlagBits2::eShaderSampledRead,
+      vk::ImageLayout::eShaderReadOnlyOptimal,
+      vk::ImageAspectFlagBits::eColor);
 
     etna::flush_barriers(cmd_buf);
 
@@ -695,9 +813,13 @@ void WorldRenderer::renderWorld(
           gBufferMetalnessRoughness.genBinding(
             pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
-          3, gBufferNorm.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          3,
+          gBufferNorm.getCurrent().genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
-          4, depth.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+          4,
+          depth.getCurrent().genBinding(
+            pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
           5, shadowMap.genBinding(pointSampler.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
         etna::Binding(
@@ -717,10 +839,14 @@ void WorldRenderer::renderWorld(
           7,
           environmentManager.getEnvBRDF().genBinding(
             linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
+        etna::Binding(
+          8,
+          reflectionTarget.genBinding(
+            linearSamplerClampToEdge.get(), vk::ImageLayout::eShaderReadOnlyOptimal)),
 
-        etna::Binding(8, shadowCameraBuffer.get().genBinding()),
-        etna::Binding(9, lightBuffer.get().genBinding()),
-        etna::Binding(10, environment.irradianceSHCoefficientBuffer.genBinding()),
+        etna::Binding(9, shadowCameraBuffer.get().genBinding()),
+        etna::Binding(10, lightBuffer.get().genBinding()),
+        etna::Binding(11, environment.irradianceSHCoefficientBuffer.genBinding()),
       });
 
     cmd_buf.bindPipeline(vk::PipelineBindPoint::eCompute, deferredPassPipeline.getVkPipeline());
@@ -779,7 +905,7 @@ void WorldRenderer::renderWorld(
 
     etna::set_state(
       cmd_buf,
-      depth.get(),
+      depth.getCurrent().get(),
       vk::PipelineStageFlagBits2::eEarlyFragmentTests,
       vk::AccessFlagBits2::eDepthStencilAttachmentRead |
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
@@ -799,8 +925,8 @@ void WorldRenderer::renderWorld(
       }},
 
       {
-        .image = depth.get(),
-        .view = depth.getView({}),
+        .image = depth.getCurrent().get(),
+        .view = depth.getCurrent().getView({}),
         .loadOp = vk::AttachmentLoadOp::eLoad,
       });
 
@@ -829,13 +955,17 @@ void WorldRenderer::renderWorld(
 
   taaPass.resolve(cmd_buf, filterHistory);
   sharpenPass.execute(cmd_buf, resolveTarget, pointSampler);
-  hizPass.execute(cmd_buf, depth);
+
+  auto& blitSrc = showJustReflections ? reflectionTarget : sharpenPass.getTarget();
+
+  generate_mips(cmd_buf, sharpenPass.getTarget(), imagePyramid);
 
   // Blit from target to swapchain image
   {
     etna::set_state(
       cmd_buf,
-      sharpenPass.getTarget().get(),
+      // sharpenPass.getTarget().get(),
+      blitSrc.get(),
       vk::PipelineStageFlagBits2::eTransfer,
       vk::AccessFlagBits2::eTransferRead,
       vk::ImageLayout::eTransferSrcOptimal,
@@ -860,7 +990,12 @@ void WorldRenderer::renderWorld(
           .layerCount = 1,
         },
       .srcOffsets = {{
-        {{0, 0, 0}, {static_cast<int32_t>(resolution.x), static_cast<int32_t>(resolution.y), 1}},
+        {{0, 0, 0},
+         {
+           static_cast<int32_t>(showJustReflections ? reflectionResolution.x : resolution.x),
+           static_cast<int32_t>(showJustReflections ? reflectionResolution.y : resolution.y),
+           1,
+         }},
       }},
       .dstSubresource =
         {
@@ -875,7 +1010,8 @@ void WorldRenderer::renderWorld(
     };
 
     cmd_buf.blitImage(
-      sharpenPass.getTarget().get(),
+      // sharpenPass.getTarget().get(),
+      blitSrc.get(),
       vk::ImageLayout::eTransferSrcOptimal,
       target_image,
       vk::ImageLayout::eTransferDstOptimal,
@@ -901,13 +1037,13 @@ void WorldRenderer::renderWorld(
       case DebugPreviewShadowMap:
         return &shadowMap;
       case DebugPreviewDepth:
-        return &depth;
+        return &depth.getCurrent();
       case DebugPreviewGBufferAlbedo:
         return &gBufferAlbedo;
       case DebugPreviewGBufferMetalnessRoughness:
         return &gBufferMetalnessRoughness;
       case DebugPreviewGBufferNorm:
-        return &gBufferNorm;
+        return &gBufferNorm.getCurrent();
       default:
         return nullptr;
       }
@@ -923,6 +1059,8 @@ void WorldRenderer::renderWorld(
 
   cameraData.proceed();
   transforms.proceed();
+  gBufferNorm.proceed();
+  depth.proceed();
 }
 
 void WorldRenderer::drawGui()
@@ -932,22 +1070,6 @@ void WorldRenderer::drawGui()
     static float newMaterialTextureMipBias = materialTextureMipBias;
 
     ImGui::Checkbox("Animate objects", &animate);
-    ImGui::Checkbox("Enable TAA", &enableTAA);
-    ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
-    ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
-    ImGui::Checkbox("Filter History", &filterHistory);
-    ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
-    ImGui::SliderFloat("Sharpen Multiplier", &sharpenPass.getAmount(), 0.0f, 1.0f, "%.1f");
-
-    if (newMaterialTextureMipBias != materialTextureMipBias)
-    {
-      materialTextureMipBias = newMaterialTextureMipBias;
-      recreateMaterialTextureSampler();
-    }
-
-    ImGui::NewLine();
-
-    ImGui::SeparatorText("Environment");
 
     ImGui::Combo(
       "Environment",
@@ -961,72 +1083,118 @@ void WorldRenderer::drawGui()
       0,
       environmentManager.getPrefilteredEnvMapMips() - 1);
 
-    ImGui::NewLine();
-
-    ImGui::Text("Irradiance SH Coefficients:");
-
-    constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
-      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
-    if (ImGui::BeginTable("table1", 4, FLAGS))
+    if (ImGui::CollapsingHeader("TAA", ImGuiTreeNodeFlags_None))
     {
-      ImGui::TableSetupColumn("E_l,m");
-      ImGui::TableSetupColumn("R");
-      ImGui::TableSetupColumn("G");
-      ImGui::TableSetupColumn("B");
-      ImGui::TableHeadersRow();
+      ImGui::Checkbox("Enable TAA", &enableTAA);
+      ImGui::SliderFloat("Jitter scale", &taaPass.getJitterScale(), 0.0f, 2.0f, "%.1f");
+      ImGui::Checkbox("Unjitter Texture UVs", &unjitterTextureUVs);
+      ImGui::Checkbox("Filter History", &filterHistory);
+      ImGui::SliderFloat("Mip Bias", &newMaterialTextureMipBias, -4.0f, 4.0f, "%.1f");
+      ImGui::SliderFloat("Sharpen Multiplier", &sharpenPass.getAmount(), 0.0f, 1.0f, "%.1f");
 
-      constexpr std::array ROW_NAMES = {
-        "E_0,0",
-        "E_1,1",
-        "E_1,0",
-        "E_1,-1",
-        "E_2,1",
-        "E_2,-1",
-        "E_2,_2",
-        "E_2,0",
-        "E_2,2",
-      };
-
-      for (size_t row = 0; row < ROW_NAMES.size(); ++row)
+      if (newMaterialTextureMipBias != materialTextureMipBias)
       {
-        ImGui::TableNextRow();
-
-        ImGui::TableSetColumnIndex(0);
-        ImGui::Text("%s", ROW_NAMES[row]);
-
-        const auto* coeffs = &environmentManager.getEnvironments()[environmentIdx]
-                                .irradianceSHCoefficientArray[3U * row];
-
-        for (size_t column = 0; column < 3; ++column)
-        {
-          ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
-          ImGui::Text("%f", coeffs[column]);
-        }
+        materialTextureMipBias = newMaterialTextureMipBias;
+        recreateMaterialTextureSampler();
       }
-      ImGui::EndTable();
     }
 
-    ImGui::NewLine();
+    static bool enableReflections = true;
+    if (ImGui::CollapsingHeader("SSSR", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      ImGui::Checkbox("Enable SSSR", &enableReflections);
 
-    ImGui::SeparatorText("Lighting");
+      ImGui::Checkbox("Show reflections only", &showJustReflections);
+      ImGui::Checkbox("Show iteration complexity", &visualizeIterationCount);
+
+      if (ImGui::Button("Invalidate History"))
+      {
+        invalidateSSSR = true;
+      }
+
+      ImGui::NewLine();
+
+      ImGui::Checkbox("Half resolution", &useHalfResolution);
+      ImGui::Checkbox("Use blue noise", &useBlueNoise);
+      ImGui::Checkbox("Temporal accumulation", &useTemporalAccumulation);
+      ImGui::Checkbox("Exponential accumulation", &useExponentialTemporalMean);
+      ImGui::Checkbox("Filter", &useFilter);
+      ImGui::Checkbox("Use temporal variance", &useTemporalVariance);
+      ImGui::Checkbox("Fallback to average", &fallbackToAverage);
+      ImGui::Checkbox("Trace behind surfaces", &traceBehindSurfaces);
+
+      ImGui::SliderInt("Max iterations", &sssrMaxIterations, 1, 300);
+      ImGui::SliderInt("Max TA samples", &sssrMaxAccumulationSamples, 1, 512);
+      ImGui::SliderFloat("Depth thickness", &sssrDepthThickness, 0.0f, 0.001f, "%.4f");
+      ImGui::SliderFloat("Roughness threshold", &sssrRoughnessThreshold, 0.0f, 1.0f, "%.2f");
+      ImGui::SliderFloat("Temporal stability", &sssrTemporalStability, 0.0f, 1.0f, "%.2f");
+    }
+    pushConstDeferredPass.enableReflections = static_cast<shader_bool>(enableReflections);
+
+    if (ImGui::CollapsingHeader("Irradiance SH Coefficients", ImGuiTreeNodeFlags_None))
+    {
+      constexpr ImGuiTableFlags FLAGS = ImGuiTableFlags_Resizable | ImGuiTableFlags_Hideable |
+      ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV;
+      if (ImGui::BeginTable("table1", 4, FLAGS))
+      {
+        ImGui::TableSetupColumn("E_l,m");
+        ImGui::TableSetupColumn("R");
+        ImGui::TableSetupColumn("G");
+        ImGui::TableSetupColumn("B");
+        ImGui::TableHeadersRow();
+
+        constexpr std::array ROW_NAMES = {
+          "E_0,0",
+          "E_1,1",
+          "E_1,0",
+          "E_1,-1",
+          "E_2,1",
+          "E_2,-1",
+          "E_2,_2",
+          "E_2,0",
+          "E_2,2",
+        };
+
+        for (size_t row = 0; row < ROW_NAMES.size(); ++row)
+        {
+          ImGui::TableNextRow();
+
+          ImGui::TableSetColumnIndex(0);
+          ImGui::Text("%s", ROW_NAMES[row]);
+
+          const auto* coeffs = &environmentManager.getEnvironments()[environmentIdx]
+                                  .irradianceSHCoefficientArray[3U * row];
+
+          for (size_t column = 0; column < 3; ++column)
+          {
+            ImGui::TableSetColumnIndex(static_cast<int>(column) + 1);
+            ImGui::Text("%f", coeffs[column]);
+          }
+        }
+        ImGui::EndTable();
+      }
+    }
 
     static bool enableEmission = true;
     static bool enableDiffuseIBL = true;
     static bool enableSpecularIBL = true;
-    static bool enableDirectionalLight = false;
+    static bool enableDirectionalLight = true;
     static bool enablePointLights = false;
-    ImGui::Checkbox("Enable Emission", &enableEmission);
-    ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
-    ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
-    ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
-    ImGui::Checkbox("Enable Point Lights", &enablePointLights);
+
+    if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+      ImGui::Checkbox("Enable Emission", &enableEmission);
+      ImGui::Checkbox("Enable Diffuse IBL", &enableDiffuseIBL);
+      ImGui::Checkbox("Enable Specular IBL", &enableSpecularIBL);
+      ImGui::Checkbox("Enable Directional Light", &enableDirectionalLight);
+      ImGui::Checkbox("Enable Point Lights", &enablePointLights);
+    }
+
     pushConstDeferredPass.enableEmission = static_cast<shader_bool>(enableEmission);
     pushConstDeferredPass.enableDiffuseIBL = static_cast<shader_bool>(enableDiffuseIBL);
     pushConstDeferredPass.enableSpecularIBL = static_cast<shader_bool>(enableSpecularIBL);
     pushConstDeferredPass.enableDirectionalLight = static_cast<shader_bool>(enableDirectionalLight);
     pushConstDeferredPass.enablePointLights = static_cast<shader_bool>(enablePointLights);
-
-    ImGui::NewLine();
   }
 
   if (ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen))
@@ -1040,14 +1208,14 @@ void WorldRenderer::drawGui()
       materialNames.push_back(material.name.c_str());
     }
 
-    static int32_t materialIdx = 0;
+    static int32_t materialIdx = static_cast<int32_t>(materialNames.size()) - 1;
     ImGui::Combo(
       "Material", &materialIdx, materialNames.data(), static_cast<int32_t>(materialNames.size()));
 
     ImGui::NewLine();
 
     ImGui::ColorEdit3("Albedo", glm::value_ptr(materials[materialIdx].albedo));
-    ImGui::SliderFloat("Roughness", &materials[materialIdx].roughness, 0.0f, 1.0f, "r = %.3f");
-    ImGui::SliderFloat("Metalness", &materials[materialIdx].metalness, 0.0f, 1.0f, "m = %.3f");
+    ImGui::SliderFloat("Roughness", &materials[materialIdx].roughness, 0.0f, 1.0f, "r = %.2f");
+    ImGui::SliderFloat("Metalness", &materials[materialIdx].metalness, 0.0f, 1.0f, "m = %.2f");
   }
 }

@@ -1,0 +1,199 @@
+#version 450
+#extension GL_ARB_separate_shader_objects : enable
+#extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_scalar_block_layout : enable
+
+#include "sssr_common.glsl"
+
+const int GROUP_SIZE         = 8;
+const int SAMPLE_BORDER      = 4;
+const int SAMPLE_WINDOW_SIZE = GROUP_SIZE + 2 * SAMPLE_BORDER;
+
+layout(set = 0, binding = 0) uniform curr_camera_data_t
+{
+  CameraData currCamera;
+};
+
+layout(set = 0, binding = 1) uniform sampler2D texHiZ;
+layout(set = 0, binding = 2) uniform sampler2D texCurrGBufferNorm;
+layout(set = 0, binding = 3) uniform sampler2D texMetalnessRoughness;
+layout(set = 0, binding = 4) uniform sampler2D texReflectionConfidence;
+layout(set = 0, binding = 5) uniform sampler2D texVarianceAndNumSamples;
+layout(set = 0, binding = 6) uniform sampler2D texAvgReflection;
+
+layout(set = 0, binding = 7, rgba8) uniform writeonly image2D out_reflectionConfidence;
+layout(set = 0, binding = 8, rg16f) uniform writeonly image2D out_varianceAndNumSamples;
+
+struct NeighborData
+{
+  vec4 reflectionConfidence;
+  vec3 normalWS;
+  vec3 positionWS;
+  vec2 varianceAndNumSamples;
+};
+
+shared NeighborData sharedData[SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE];
+
+void LoadShared()
+{
+  ivec2 sampleWindowUpperLeftCoord = ivec2(gl_WorkGroupID.xy * GROUP_SIZE) - SAMPLE_BORDER;
+
+  int threadIdx = int(gl_LocalInvocationIndex);
+  for (int idx = threadIdx; idx < SAMPLE_WINDOW_SIZE * SAMPLE_WINDOW_SIZE; idx += GROUP_SIZE * GROUP_SIZE)
+  {
+    ivec2 sampleCoord = sampleWindowUpperLeftCoord + ivec2(idx % SAMPLE_WINDOW_SIZE, idx / SAMPLE_WINDOW_SIZE);
+    sampleCoord = clamp(sampleCoord, ivec2(0), params.resolution - 1);
+    vec2 uv = (vec2(sampleCoord) + 0.5f) * params.invResolution;
+
+    float depth = texelFetch(texHiZ, sampleCoord, params.startMip).r;
+
+    NeighborData neighborData;
+    neighborData.reflectionConfidence = texelFetch(texReflectionConfidence, sampleCoord, 0);
+    neighborData.normalWS = LoadNormal(texCurrGBufferNorm, uv);
+    neighborData.positionWS = ConvertScreenToWorld(currCamera, vec3(uv, depth));
+    neighborData.varianceAndNumSamples = texelFetch(texVarianceAndNumSamples, sampleCoord, 0).rg;
+
+    sharedData[idx] = neighborData;
+  }
+
+  barrier();
+}
+
+float NormalWeight(vec3 normalWS, vec3 sampleNormalWS)
+{
+  int sigma = 128;
+  return pow(max(0.0f, dot(normalWS, sampleNormalWS)), sigma);
+}
+
+float PlaneDistance(vec3 positionWS, vec3 samplePositionWS, vec3 planeNormalWS)
+{
+  return abs(dot(positionWS - samplePositionWS, planeNormalWS));
+}
+
+float DepthWeight(vec3 positionWS, vec3 samplePositionWS, vec3 normalWS)
+{
+  return PlaneDistance(positionWS, samplePositionWS, normalWS) < 0.01 ? 1.0 : 0.0;
+}
+
+float LuminanceWeight(float luminance, float sampleLuminance, float temporalVariance)
+{
+  float eps = 0.005f;
+  float sigma = 4.0f;
+  return exp(-abs(sampleLuminance - luminance) / (sigma * abs(temporalVariance) + eps));
+}
+
+float RadianceWeight(vec3 avgReflection, vec3 sampleReflection, float centerVariance)
+{
+  float weight = exp(-(0.6f + centerVariance * 0.1f) * length(avgReflection - sampleReflection));
+  weight = max(weight, 1.0e-2f);
+  return weight;
+}
+
+float GaussianWeight(float x)
+{
+  float sigma = 3.0f;
+  return exp(-(x * x) / (2.0 * sigma * sigma));
+}
+
+layout(local_size_x = GROUP_SIZE, local_size_y = GROUP_SIZE, local_size_z = 1) in;
+void main()
+{
+  ivec2 texelCoords = ivec2(gl_GlobalInvocationID.xy);
+  vec2 uv = (vec2(texelCoords) + 0.5f) * params.invResolution;
+
+  LoadShared();
+
+  if (texelCoords.x >= params.resolution.x || texelCoords.y >= params.resolution.y)
+  {
+    return;
+  }
+
+  float roughness = texture(texMetalnessRoughness, uv).g;
+  if (!CheckRoughnessThreshold(roughness))
+  {
+    imageStore(out_reflectionConfidence, texelCoords, vec4(0.0f));
+    return;
+  }
+
+  ivec2 centerCoord = ivec2(gl_LocalInvocationID.xy) + SAMPLE_BORDER;
+  int centerIdx = centerCoord.y * SAMPLE_WINDOW_SIZE + centerCoord.x;
+
+  NeighborData centerData = sharedData[centerIdx];
+
+  if (!params.useFilter)
+  {
+    imageStore(out_reflectionConfidence, texelCoords, centerData.reflectionConfidence);
+    return;
+  }
+
+  vec3 avgReflection = texture(texAvgReflection, uv).rgb;
+
+  float maxAccumulationSamples = float(params.maxAccumulationSamples);
+  float numSamples = texelFetch(texVarianceAndNumSamples, texelCoords, 0).g;
+  numSamples = clamp(numSamples, 1.0f, maxAccumulationSamples);
+
+  float centerTemporalVariance = texelFetch(texVarianceAndNumSamples, texelCoords, 0).r;
+  if (centerTemporalVariance < 0.01f)
+  {
+    imageStore(out_reflectionConfidence, texelCoords, centerData.reflectionConfidence);
+    imageStore(out_varianceAndNumSamples, texelCoords, vec4(centerTemporalVariance, numSamples, 0.0f, 0.0f));
+    return;
+  }
+
+  float minRadiusScale = (1.0 - exp(-roughness * 5.0));
+  int minRadius = int(round(minRadiusScale * SAMPLE_BORDER));
+
+  float radiusScale = 1.0f / numSamples;
+  int radius = int(round((SAMPLE_BORDER / (maxAccumulationSamples - 1.0f)) *
+                         (maxAccumulationSamples * radiusScale - 1.0f)));
+  radius = clamp(radius, minRadius, SAMPLE_BORDER);
+
+  float varianceWeight = max(0.1f, 1.0f - exp(-(centerTemporalVariance * 4.4f)));
+
+  float totalWeight = RadianceWeight(avgReflection, centerData.reflectionConfidence.rgb, centerTemporalVariance);
+  vec4 resultReflectionConfidence = vec4(centerData.reflectionConfidence.rgb * totalWeight, centerData.reflectionConfidence.a);
+  vec2 resultVarianceAndNumSamples = vec2(centerTemporalVariance * totalWeight * totalWeight, numSamples);
+
+  for (int y = -radius; y <= radius; ++y)
+  {
+    float gaussianWeightY = GaussianWeight(float(y));
+
+    for (int x = -radius; x <= radius; ++x)
+    {
+      int sampleIdx = centerIdx + y * SAMPLE_WINDOW_SIZE + x;
+
+      NeighborData sampleData = sharedData[sampleIdx];
+
+      float weight = 1.0f;
+
+      if (params.useTemporalVariance)
+      {
+        float sampleLuminance = Luminance(sampleData.reflectionConfidence.rgb);
+        float temporalVariance = texelFetch(texVarianceAndNumSamples, texelCoords + ivec2(x, y), 0).r;
+
+        weight *= RadianceWeight(avgReflection, sampleData.reflectionConfidence.rgb, centerTemporalVariance);
+      }
+
+      weight *= NormalWeight(centerData.normalWS, sampleData.normalWS);
+      weight *= DepthWeight(centerData.positionWS, sampleData.positionWS, centerData.normalWS);
+      weight *= GaussianWeight(float(x)) * gaussianWeightY;
+      weight *= varianceWeight;
+
+      resultReflectionConfidence += sampleData.reflectionConfidence * weight;
+      resultVarianceAndNumSamples.r += sampleData.varianceAndNumSamples.r * weight * weight;
+
+      totalWeight += weight;
+    }
+  }
+
+  if (totalWeight > 0.0f)
+  {
+    resultReflectionConfidence /= totalWeight;
+    resultVarianceAndNumSamples.r /= totalWeight * totalWeight;
+  }
+
+  resultVarianceAndNumSamples.g = numSamples;
+
+  imageStore(out_reflectionConfidence, texelCoords, resultReflectionConfidence);
+  imageStore(out_varianceAndNumSamples, texelCoords, vec4(resultVarianceAndNumSamples, 0.0f, 0.0f));
+}

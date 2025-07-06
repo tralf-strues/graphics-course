@@ -53,6 +53,7 @@ function(target_add_shaders tgt)
           "$<$<BOOL:${incl_dirs}>:-I$<JOIN:${incl_dirs},;-I>>"
           "$<$<CONFIG:Debug>:-g>"
           -V
+          --target-env spirv1.5
           ${input_path}
           -o ${output_path}
         VERBATIM

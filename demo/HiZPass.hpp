@@ -17,6 +17,8 @@ public:
 
   etna::Image& getHiZ();
 
+  size_t getMipCount() const;
+
   void execute(vk::CommandBuffer cmd_buf, etna::Image& depth);
 
 private:

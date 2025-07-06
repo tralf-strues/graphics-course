@@ -1,0 +1,27 @@
+Name,Value,Byte Offset,Type
+currCamera,,0,CameraData
+projView,,0,float4x4 (column_major)
+projView.row0,"0.92271, 0.00072, -0.31277, -0.22582",,float4
+projView.row1,"0.27611, -1.50531, 0.81105, 2.7338",,float4
+projView.row2,"-0.28031, -0.49541, -0.82341, 8.07109",,float4
+projView.row3,"-0.28003, -0.49491, -0.82259, 8.16302",,float4
+proj,,64,float4x4 (column_major)
+proj.row0,"-0.97428, 0.00, -0.00146, 0.00",,float4
+proj.row1,"0.00, -1.73205, 0.00051, 0.00",,float4
+proj.row2,"0.00, 0.00, 1.001, -0.1001",,float4
+proj.row3,"0.00, 0.00, 1.00, 0.00",,float4
+view,,128,float4x4 (column_major)
+view.row0,"-0.94665, 2.23518E-07, 0.32227, 0.21951",,float4
+view.row1,"-0.15949, 0.86894, -0.46851, -1.57594",,float4
+view.row2,"-0.28003, -0.49491, -0.82259, 8.16302",,float4
+view.row3,"0.00, 0.00, 0.00, 1.00",,float4
+wsPos,"2.24234, 5.40936, 5.90569",192,float3
+_pad0,"-4.31602E+08",204,float
+wsRight,"0.94665, -1.19209E-07, -0.32227",208,float3
+_pad1,"-4.31602E+08",220,float
+wsUp,"-0.15949, 0.86894, -0.46851",224,float3
+_pad2,"-4.31602E+08",236,float
+wsForward,"-0.28003, -0.49491, -0.82258",240,float3
+_pad3,"-4.31602E+08",252,float
+jitterNDC,"-0.00146, 0.00051",256,float2
+jitterPixels,"-0.46875, 0.09259",264,float2
